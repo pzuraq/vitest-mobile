@@ -1,0 +1,28 @@
+{
+  "name": "rn-test-harness",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "android": "expo run:android"
+  },
+  "dependencies": {
+    "expo": "~55.0.0",
+    "expo-build-properties": "~55.0.0",
+    "react": "19.2.0",
+    "react-native": "0.83.4",
+    "test-runtime": "*",
+    "native-harness": "*"
+  },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "typescript": "~5.3.3"
+  }
+}

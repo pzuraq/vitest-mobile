@@ -1,0 +1,9 @@
+{
+  "name": "rn-test-runner",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "app",
+    "app/modules/*"
+  ]
+}

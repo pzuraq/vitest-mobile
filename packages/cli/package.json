@@ -1,0 +1,16 @@
+{
+  "name": "rn-test-cli",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "bin": {
+    "rn-test-cli": "./src/index.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0"
+  }
+}

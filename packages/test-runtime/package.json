@@ -1,0 +1,15 @@
+{
+  "name": "test-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "dependencies": {
+    "@vitest/expect": "^3.1.1",
+    "react": "*",
+    "react-native": "*"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  }
+}

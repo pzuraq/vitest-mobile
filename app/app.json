@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "rn-test-harness",
+    "slug": "rn-test-harness",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "rn-test-harness",
+    "entryPoint": "./index.ts",
+    "newArchEnabled": true,
+    "plugins": [
+      ["expo-build-properties", {
+        "ios": {
+          "deploymentTarget": "16.0"
+        }
+      }]
+    ],
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.test.rnharness"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.test.rnharness"
+    }
+  }
+}
