@@ -32,7 +32,26 @@
       "Bash(curl -s \"https://api.github.com/repos/lyft/Hammer/contents/Sources/Hammer\")",
       "Bash(python3 -c \"import json,sys; [print\\(x[''''name'''']\\) for x in json.load\\(sys.stdin\\)]\")",
       "Bash(curl -s \"https://api.github.com/repos/lyft/Hammer/contents/Sources/Hammer/AppleInternal\")",
-      "Bash(curl -s \"https://api.github.com/repos/lyft/Hammer/contents/Sources/Hammer/EventGenerator\")"
+      "Bash(curl -s \"https://api.github.com/repos/lyft/Hammer/contents/Sources/Hammer/EventGenerator\")",
+      "WebFetch(domain:vitest.dev)",
+      "Bash(./scripts/test-bundle.sh)",
+      "Bash(./scripts/run-vitest-with-logs.sh)",
+      "Bash(pkill -f 'expo start')",
+      "Bash(pkill -f metro)",
+      "Bash(lsof -ti:7878)",
+      "Bash(lsof -i:8081)",
+      "Bash(lsof -i:7878)",
+      "Bash(./scripts/run-vitest.sh)",
+      "Bash(./scripts/screenshot.sh)",
+      "Bash(npm view:*)",
+      "Bash(adb version:*)",
+      "Read(//Users/kristen/Library/Android/sdk/emulator/**)",
+      "Bash(adb devices:*)",
+      "Bash(npx eslint:*)",
+      "Bash(npx prettier:*)",
+      "Bash(npx vitest:*)",
+      "Bash(ls /Users/kristen/Code/scratch/test-harness-poc/tsconfig*.json)",
+      "Bash(ls /Users/kristen/Code/scratch/test-harness-poc/packages/vitest-react-native-runtime/tsconfig*.json)"
     ],
     "additionalDirectories": [
       "/private/tmp/expo-test-export"

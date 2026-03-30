@@ -1,31 +1,26 @@
 {
   "expo": {
-    "name": "rn-test-harness",
-    "slug": "rn-test-harness",
-    "version": "1.0.0",
+    "name": "vitest-native",
+    "slug": "vitest-native",
+    "version": "0.1.0",
     "orientation": "portrait",
-    "scheme": "rn-test-harness",
-    "entryPoint": "./index.ts",
+    "scheme": "vitest-native",
     "newArchEnabled": true,
     "plugins": [
-      ["expo-build-properties", {
-        "ios": {
-          "deploymentTarget": "16.0"
+      [
+        "expo-build-properties",
+        {
+          "ios": { "deploymentTarget": "16.0" }
         }
-      }]
+      ]
     ],
-    "autolinking": {
-      "nativeModulesDir": "./modules"
-    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.test.rnharness"
+      "bundleIdentifier": "com.vitest.nativetest"
     },
     "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
-      },
-      "package": "com.test.rnharness"
+      "adaptiveIcon": { "backgroundColor": "#ffffff" },
+      "package": "com.vitest.nativetest"
     }
   }
 }

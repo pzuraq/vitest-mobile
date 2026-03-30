@@ -1,18 +1,5 @@
 {
   "extends": "expo/tsconfig.base",
-  "compilerOptions": {
-    "strict": true,
-    "paths": {
-      "test-runtime": ["../packages/test-runtime/src/index"],
-      "test-runtime/*": ["../packages/test-runtime/src/*"]
-    }
-  },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    "../packages/**/*.ts",
-    "../packages/**/*.tsx",
-    "../modules/**/*.ts",
-    "../modules/**/*.tsx"
-  ]
+  "compilerOptions": { "strict": true },
+  "include": ["**/*.ts", "**/*.tsx"]
 }

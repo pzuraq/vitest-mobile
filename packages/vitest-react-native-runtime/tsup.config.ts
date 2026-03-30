@@ -1,0 +1,71 @@
+import { defineConfig } from 'tsup';
+
+export default defineConfig([
+  {
+    entry: {
+      'node/index': 'src/node/index.ts',
+      'node/pool': 'src/node/pool.ts',
+
+      'node/environment': 'src/node/environment.ts',
+      'node/device': 'src/node/device.ts',
+    },
+    format: ['esm', 'cjs'],
+    dts: true,
+    outDir: 'dist',
+    target: 'node18',
+    platform: 'node',
+    splitting: false,
+    sourcemap: true,
+    clean: true,
+    external: ['metro', 'expo/metro-config', '@expo/metro/metro'],
+  },
+  {
+    entry: {
+      'runtime/index': 'src/runtime/index.ts',
+      'runtime/vitest-shim': 'src/runtime/vitest-shim.ts',
+    },
+    format: ['cjs'],
+    outDir: 'dist',
+    target: 'es2022',
+    platform: 'neutral',
+    splitting: false,
+    sourcemap: true,
+    clean: false,
+    external: [
+      'react',
+      'react-native',
+      'expo-modules-core',
+      '@vitest/runner',
+      '@vitest/expect',
+      '@vitest/utils',
+      'birpc',
+      'flatted',
+      'chai',
+      'vitest-react-native-runtime/test-registry',
+    ],
+  },
+  {
+    entry: { 'cli/index': 'src/cli/index.ts' },
+    format: ['esm'],
+    outDir: 'dist',
+    target: 'node18',
+    platform: 'node',
+    splitting: false,
+    sourcemap: true,
+    clean: false,
+    banner: { js: '#!/usr/bin/env node' },
+  },
+  {
+    entry: {
+      'cli/doctor': 'src/cli/doctor.ts',
+      'cli/init': 'src/cli/init.ts',
+    },
+    format: ['esm'],
+    outDir: 'dist',
+    target: 'node18',
+    platform: 'node',
+    splitting: false,
+    sourcemap: true,
+    clean: false,
+  },
+]);

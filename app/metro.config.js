@@ -6,22 +6,30 @@ const workspaceRoot = path.resolve(projectRoot, '..');
 
 const config = getDefaultConfig(projectRoot);
 
-// Watch workspace root (for hoisted node_modules), packages, and modules
-config.watchFolders = [
-  workspaceRoot,
-];
-
-// Resolve node_modules from both app and workspace root
+config.watchFolders = [workspaceRoot];
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ];
-
-// Enable package.json "exports" field resolution — required for
-// @vitest/expect which uses subpath exports like "@vitest/utils/diff"
 config.resolver.unstable_enablePackageExports = true;
-
-// Conditions for exports resolution (react-native takes priority)
 config.resolver.unstable_conditionNames = ['import', 'require', 'default'];
+
+// Virtual test registry — pool passes the path via env var
+const registryPath = process.env.VITEST_NATIVE_REGISTRY_PATH;
+if (registryPath) {
+  const originalResolver = config.resolver.resolveRequest;
+  config.resolver.resolveRequest = (context, moduleName, platform) => {
+    if (moduleName === 'vitest-react-native-runtime/test-registry') {
+      return { type: 'sourceFile', filePath: registryPath };
+    }
+    if (moduleName === 'vitest') {
+      return context.resolveRequest(context, 'vitest-react-native-runtime/vitest-shim', platform);
+    }
+    if (originalResolver) {
+      return originalResolver(context, moduleName, platform);
+    }
+    return context.resolveRequest(context, moduleName, platform);
+  };
+}
 
 module.exports = config;

@@ -1,0 +1,22 @@
+.changeset
+dist
+.next
+out
+__fixtures__
+
+# Build artifacts
+**/android/build/
+**/android/app/.cxx/
+**/ios/build/
+**/ios/DerivedData/
+**/.expo/
+**/.vitest-native/
+
+# Tooling internals
+.claude/
+
+# Lockfiles and generated files
+package-lock.json
+
+# Pack artifacts
+*.tgz

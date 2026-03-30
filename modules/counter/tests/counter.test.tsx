@@ -1,19 +1,12 @@
-/**
- * Counter module tests — demonstrates the test harness capabilities.
- *
- * Locators re-resolve on every access (like Vitest browser mode),
- * so there's no stale reference problem after state updates.
- */
-
+/// <reference types="vitest-react-native-runtime" />
 import React from 'react';
-import {
-  describe,
-  it,
-  expect,
-  render,
-  waitFor,
-} from 'test-runtime';
+import { describe, it, expect, afterEach } from 'vitest';
+import { render, cleanup, waitFor } from 'vitest-react-native-runtime/runtime';
 import { CounterModule } from '../CounterModule';
+
+afterEach(async () => {
+  await cleanup();
+});
 
 describe('CounterModule', () => {
   it('renders initial count of zero', async () => {
@@ -26,7 +19,6 @@ describe('CounterModule', () => {
     const screen = render(<CounterModule userId="123" />);
     const btn = await screen.findByTestId('increment-btn');
     await btn.tap();
-    // count re-resolves automatically — reads fresh from the tree
     const count = screen.getByTestId('count-display');
     await waitFor(() => {
       expect(count).toHaveText('1');
@@ -41,12 +33,7 @@ describe('CounterModule', () => {
 
   it('calls onCountChange callback', async () => {
     const spy = { calls: [] as number[] };
-    const screen = render(
-      <CounterModule
-        userId="123"
-        onCountChange={(n: number) => spy.calls.push(n)}
-      />
-    );
+    const screen = render(<CounterModule userId="123" onCountChange={(n: number) => spy.calls.push(n)} />);
     const btn = await screen.findByTestId('increment-btn');
     await btn.tap();
     await btn.tap();

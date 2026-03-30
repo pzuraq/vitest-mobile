@@ -1,9 +1,30 @@
 {
   "name": "rn-test-runner",
   "private": true,
+  "type": "module",
   "workspaces": [
     "packages/*",
-    "app",
-    "app/modules/*"
-  ]
+    "app"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "check-types": "tsc --noEmit && tsc --noEmit --project packages/vitest-react-native-runtime/tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm test --workspace=packages/vitest-react-native-runtime",
+    "test:e2e:android": "VITEST_E2E=1 VITEST_E2E_PLATFORM=android npx vitest run --config packages/vitest-react-native-runtime/vitest.config.e2e.ts",
+    "test:e2e:ios": "VITEST_E2E=1 VITEST_E2E_PLATFORM=ios npx vitest run --config packages/vitest-react-native-runtime/vitest.config.e2e.ts",
+    "release": "npm run build --workspace=packages/vitest-react-native-runtime && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.30.0",
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "prettier": "^3.8.1",
+    "typescript-eslint": "^8.58.0",
+    "vitest": "^4.1.2"
+  }
 }

@@ -8,13 +8,7 @@
  */
 
 import React, { useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  ActivityIndicator,
-  StyleSheet,
-} from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 
 export interface CounterModuleProps {
   userId: string;
@@ -22,11 +16,7 @@ export interface CounterModuleProps {
   onCountChange?: (count: number) => void;
 }
 
-export function CounterModule({
-  userId,
-  variant = 'default',
-  onCountChange,
-}: CounterModuleProps) {
+export function CounterModule({ userId, variant = 'default', onCountChange }: CounterModuleProps) {
   const [count, setCount] = useState(0);
   const [apiResult, setApiResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -72,25 +62,15 @@ export function CounterModule({
         {count}
       </Text>
 
-      <TouchableOpacity
-        testID="increment-btn"
-        style={styles.button}
-        onPress={handleIncrement}
-      >
+      <TouchableOpacity testID="increment-btn" style={styles.button} onPress={handleIncrement}>
         <Text style={styles.buttonText}>Increment</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity
-        testID="load-btn"
-        style={[styles.button, styles.loadButton]}
-        onPress={handleLoad}
-      >
+      <TouchableOpacity testID="load-btn" style={[styles.button, styles.loadButton]} onPress={handleLoad}>
         <Text style={styles.buttonText}>Load Data</Text>
       </TouchableOpacity>
 
-      {loading && (
-        <ActivityIndicator testID="loading-spinner" size="small" color="#6366f1" />
-      )}
+      {loading && <ActivityIndicator testID="loading-spinner" size="small" color="#6366f1" />}
 
       {apiResult !== null && (
         <Text testID="api-result" style={styles.result}>
