@@ -43,11 +43,11 @@ export function TodoListModule({ initialItems }: TodoListModuleProps) {
         </Text>
       ) : (
         items.map((item, index) => (
-          <View key={`${index}-${item}`} testID="todo-item" style={styles.itemRow}>
-            <Text testID="todo-text" style={styles.itemText}>
+          <View key={`${index}-${item}`} testID={`todo-item-${index}`} style={styles.itemRow}>
+            <Text testID={`todo-text-${index}`} style={styles.itemText}>
               {item}
             </Text>
-            <TouchableOpacity testID="delete-btn" style={styles.deleteBtn} onPress={() => handleDelete(index)}>
+            <TouchableOpacity testID={`delete-btn-${index}`} style={styles.deleteBtn} onPress={() => handleDelete(index)}>
               <Text style={styles.deleteBtnText}>Delete</Text>
             </TouchableOpacity>
           </View>

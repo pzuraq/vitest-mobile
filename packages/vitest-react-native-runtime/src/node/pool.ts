@@ -61,6 +61,21 @@ export function createNativePoolWorker(options: NativePoolOptions) {
 
   log.verbose(`Mode: ${mode} | Headless: ${headless} | Platform: ${platform}`);
 
+  // Clean up on process exit so vitest doesn't hang
+  if (mode === 'run') {
+    process.once('beforeExit', () => {
+      closeMetro();
+      if (_connectedSocket) {
+        try { _connectedSocket.terminate(); } catch { /* ignore */ }
+        _connectedSocket = null;
+      }
+      _wss?.close();
+      _wss = null;
+      stopApp(platform, bundleId);
+      if (shouldShutdownEmulator) shutdownDevice(platform);
+    });
+  }
+
   function emit(event: string, data: unknown): void {
     const cbs = listeners.get(event);
     if (cbs) cbs.forEach(cb => cb(data));
@@ -297,6 +312,106 @@ ${entries.join(',\n')}
     });
   }
 
+  // ── Startup logic (extracted so the pool worker can serialize concurrent calls) ──
+
+  async function doStart(): Promise<void> {
+    // ── Step 1: Check environment
+    const envResult = checkEnvironment(platform);
+    if (!envResult.ok) {
+      log.error('\nEnvironment check failed:\n');
+      for (const issue of envResult.issues) {
+        log.error(`  ✗ ${issue.message}`);
+        if (issue.fix) log.error(`    Fix: ${issue.fix}\n`);
+      }
+      if (skipIfUnavailable) {
+        log.warn('Skipping native tests (skipIfUnavailable)\n');
+        emit('message', { __vitest_worker_response__: true, type: 'started' });
+        return;
+      }
+      throw new Error('Environment not ready. See above for setup instructions.');
+    }
+
+    // ── Step 2: Ensure device
+    await ensureDevice(platform, { wsPort: port, metroPort, deviceId, headless });
+
+    // ── Step 3: Generate test registry
+    const registryPath = generateTestRegistry();
+
+    // ── Step 4: WS server
+    if (_connectedSocket) {
+      log.verbose('Reusing existing app connection');
+    } else {
+      setupWss();
+    }
+
+    // ── Step 5: Metro
+    if (_metroServer) {
+      log.verbose('Metro already running, reusing');
+    } else {
+      const metroAlready = await isMetroRunning();
+      if (metroAlready) {
+        log.verbose('External Metro already running on port, reusing');
+      } else {
+        killStaleOnPort(metroPort);
+        await startMetro(registryPath);
+      }
+    }
+
+    // ── Step 6: App
+    async function launchWithRetry(): Promise<void> {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          launchApp(platform, bundleId, { metroPort, deviceId });
+          return;
+        } catch (err) {
+          if (attempt === 0) {
+            log.warn('Launch failed, re-checking device...');
+            await ensureDevice(platform, { wsPort: port, metroPort, deviceId, headless });
+          } else {
+            throw new Error(`Failed to launch app after retry: ${(err as Error).message}`, { cause: err });
+          }
+        }
+      }
+    }
+
+    async function waitForApp(): Promise<void> {
+      log.info('Waiting for app to connect...');
+      return new Promise((resolvePromise, reject) => {
+        const original = _resolveConnection;
+        _resolveConnection = () => {
+          original?.();
+          resolvePromise();
+        };
+        const t = setTimeout(() => {
+          if (!_connectedSocket) reject(new Error('App did not connect within 30s'));
+        }, 30000);
+        unrefTimer(t);
+        if (_connectedSocket) {
+          clearTimeout(t);
+          resolvePromise();
+        }
+      });
+    }
+
+    if (_connectedSocket && _hasCompletedCycle) {
+      log.verbose('Reusing existing app connection');
+    } else {
+      // Reject stale connections from previous runs
+      if (_connectedSocket) {
+        try { _connectedSocket.terminate(); } catch { /* ignore */ }
+        _connectedSocket = null;
+      }
+      stopApp(platform, bundleId);
+      const delay = new Promise<void>(r => {
+        const t = setTimeout(r, 1000);
+        unrefTimer(t);
+      });
+      await delay;
+      await launchWithRetry();
+      await waitForApp();
+    }
+  }
+
   // ── Pool Worker ────────────────────────────────────────────────
 
   const worker = {
@@ -331,123 +446,14 @@ ${entries.join(',\n')}
     },
 
     async start(): Promise<void> {
-      // ── Step 1: Check environment
-      const envResult = checkEnvironment(platform);
-      if (!envResult.ok) {
-        log.error('\nEnvironment check failed:\n');
-        for (const issue of envResult.issues) {
-          log.error(`  ✗ ${issue.message}`);
-          if (issue.fix) log.error(`    Fix: ${issue.fix}\n`);
-        }
-        if (skipIfUnavailable) {
-          log.warn('Skipping native tests (skipIfUnavailable)\n');
-          emit('message', { __vitest_worker_response__: true, type: 'started' });
-          return;
-        }
-        throw new Error('Environment not ready. See above for setup instructions.');
-      }
-
-      // ── Step 2: Ensure device
-      await ensureDevice(platform, { wsPort: port, metroPort, deviceId, headless });
-
-      // ── Step 3: Generate test registry
-      const registryPath = generateTestRegistry();
-
-      // ── Step 4: WS server
-      if (_connectedSocket) {
-        log.verbose('Reusing existing app connection');
-      } else {
-        setupWss();
-      }
-
-      // ── Step 5: Metro
-      if (_metroServer) {
-        log.verbose('Metro already running, reusing');
-      } else {
-        const metroAlready = await isMetroRunning();
-        if (metroAlready) {
-          log.verbose('External Metro already running on port, reusing');
-        } else {
-          killStaleOnPort(metroPort);
-          await startMetro(registryPath);
-        }
-      }
-
-      // ── Step 6: App
-      async function launchWithRetry(): Promise<void> {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            launchApp(platform, bundleId, { metroPort, deviceId });
-            return;
-          } catch (err) {
-            if (attempt === 0) {
-              log.warn('Launch failed, re-checking device...');
-              await ensureDevice(platform, { wsPort: port, metroPort, deviceId, headless });
-            } else {
-              throw new Error(`Failed to launch app after retry: ${(err as Error).message}`, { cause: err });
-            }
-          }
-        }
-      }
-
-      async function waitForApp(): Promise<void> {
-        log.info('Waiting for app to connect...');
-        return new Promise((resolvePromise, reject) => {
-          const original = _resolveConnection;
-          _resolveConnection = () => {
-            original?.();
-            resolvePromise();
-          };
-          const t = setTimeout(() => {
-            if (!_connectedSocket) reject(new Error('App did not connect within 30s'));
-          }, 30000);
-          unrefTimer(t);
-          if (_connectedSocket) {
-            clearTimeout(t);
-            resolvePromise();
-          }
-        });
-      }
-
-      if (mode === 'dev' && _connectedSocket && _hasCompletedCycle) {
-        log.verbose('Reusing app connection');
-      } else {
-        stopApp(platform, bundleId);
-        _connectedSocket = null;
-        const delay = new Promise<void>(r => {
-          const t = setTimeout(r, 1000);
-          unrefTimer(t);
-        });
-        await delay;
-        await launchWithRetry();
-        await waitForApp();
-      }
+      await doStart();
     },
 
     async stop(): Promise<void> {
-      if (mode === 'run') {
-        closeMetro();
-        if (_connectedSocket) {
-          try {
-            _connectedSocket.terminate();
-          } catch {
-            /* ignore */
-          }
-          _connectedSocket = null;
-        }
-        await closeWss();
-        stopApp(platform, bundleId);
-        if (shouldShutdownEmulator) {
-          shutdownDevice(platform);
-        }
-        _hasCompletedCycle = false;
-      }
-      if (mode === 'dev') {
-        _hasCompletedCycle = true;
-      }
-
+      _hasCompletedCycle = true;
       emit('message', { __vitest_worker_response__: true, type: 'stopped' });
     },
+
 
     send(message: BiRpcMessage): void {
       if (message?.__vitest_worker_request__) {

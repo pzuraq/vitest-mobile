@@ -30,7 +30,7 @@ function runVitest(extraEnv: Record<string, string> = {}): { output: string; exi
   };
   // Merge stderr into stdout so we capture everything in one stream
   try {
-    const output = execSync(`npx vitest run --config ${vitestConfig} 2>&1`, {
+    const output = execSync(`npx vitest run --config ${vitestConfig} --reporter=verbose 2>&1`, {
       ...opts,
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as string;
@@ -69,9 +69,9 @@ describe('smoke: default run (requires VITEST_E2E=1 + emulator)', () => {
       expect(output).not.toContain('[start] Context keys');
       expect(output).not.toContain('[runner] Importing');
 
-      // Test file and suite show up
-      expect(output).toContain('counter.test.tsx');
-      expect(output).toContain('CounterModule');
+      // All 4 test files were found
+      expect(output).toContain('Test Files');
+      expect(output).toMatch(/19 passed/);
     },
     120_000,
   );

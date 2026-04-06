@@ -123,11 +123,9 @@ describe('generateCodeFrame', () => {
     writeFileSync(absPath, lines.join('\n'), 'utf-8');
     const frame = generateCodeFrame(absPath, 5, 10);
     expect(frame).not.toBeNull();
-    // Strip ANSI color codes before asserting on structure
-    const plain = frame!.replace(/\x1b\[[0-9;]*m/g, '');
-    expect(plain).toMatch(/>\s*5\s+\|/);
+    expect(frame).toMatch(/>\s*5\s+\|/);
     // After `|`, one space from the template plus (column - 1) caret padding.
-    expect(plain).toMatch(/\|\s{10}\^/);
+    expect(frame).toMatch(/\|\s{10}\^/);
   });
 
   it('narrows context when range is smaller', () => {

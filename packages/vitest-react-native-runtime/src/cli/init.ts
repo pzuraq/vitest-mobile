@@ -165,28 +165,39 @@ Done! Next steps:
 
 1. Customize ${dest}/app.json if needed (bundle ID, display name, etc.)
 
-2. Install dependencies and prebuild:
+2. Install dependencies:
 
-     cd ${dest}
-     npm install
-     npx expo prebuild --clean
+     cd ${dest} && npm install
 
-3. Build and install on a device or emulator:
+3. Build and install on your device or emulator:
 
-     npx expo run:android   # or run:ios
+     npx vitest-react-native-runtime bootstrap android --app-dir ${dest}
+     # or
+     npx vitest-react-native-runtime bootstrap ios --app-dir ${dest}
+
+   This will build the app, boot an emulator/simulator, and install.
+   You can also run the steps separately:
+
+     npx vitest-react-native-runtime build android --app-dir ${dest}
+     npx vitest-react-native-runtime install android --app-dir ${dest}
 
 4. Point your vitest config at this app:
 
-     import { nativePlugin } from 'vitest-react-native-runtime';
      // vitest.config.ts
+     import { defineConfig } from 'vitest/config';
+     import { nativePlugin } from 'vitest-react-native-runtime';
+
      export default defineConfig({
        plugins: [nativePlugin({
-         platform: 'android',
-         bundleId: 'com.vitest.nativetest', // match app.json android.package
+         platform: 'android', // or 'ios'
          appDir: '${dest}',
        })],
      });
 
-The pool will automatically discover test files from your vitest include
-patterns and pass them to Metro via the test registry.
+5. Run your tests:
+
+     npx vitest run
+
+   The pool will automatically boot an emulator if none is running,
+   start Metro, launch the app, and stream results back to Vitest.
 `);

@@ -51,7 +51,8 @@
       "Bash(npx prettier:*)",
       "Bash(npx vitest:*)",
       "Bash(ls /Users/kristen/Code/scratch/test-harness-poc/tsconfig*.json)",
-      "Bash(ls /Users/kristen/Code/scratch/test-harness-poc/packages/vitest-react-native-runtime/tsconfig*.json)"
+      "Bash(ls /Users/kristen/Code/scratch/test-harness-poc/packages/vitest-react-native-runtime/tsconfig*.json)",
+      "Bash(VITEST_NATIVE_VERBOSE=1 npx vitest run)"
     ],
     "additionalDirectories": [
       "/private/tmp/expo-test-export"

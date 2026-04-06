@@ -43,8 +43,8 @@ describe('TodoListModule', () => {
 
   it('deletes an item', async () => {
     const screen = render(<TodoListModule initialItems={['Task A', 'Task B', 'Task C']} />);
-    const deleteButtons = screen.getAllByTestId('delete-btn');
-    await deleteButtons[1].tap();
+    const deleteBtn = await screen.findByTestId('delete-btn-1');
+    await deleteBtn.tap();
     const count = screen.getByTestId('item-count');
     await waitFor(() => {
       expect(count).toHaveText('2 items');

@@ -28,11 +28,9 @@ function nativeResolveAllByText(containerRef: React.RefObject<any>, text: string
   return fiberResolveAllByText(containerRef, text);
 }
 
-function nativeResolveAllByTestId(_containerRef: React.RefObject<any>, testId: string): ResolvedElement[] {
-  // Native findByTestId returns first match; for getAllBy, fall back to fiber
-  const tag = NativeHarness.findByTestId(testId);
-  if (tag == null) return [];
-  return [{ _type: 'native', tag, testId } as any];
+function nativeResolveAllByTestId(containerRef: React.RefObject<any>, testId: string): ResolvedElement[] {
+  // Native findByTestId only returns first match; use fiber to find all
+  return fiberResolveAllByTestId(containerRef, testId);
 }
 
 function nativeReadText(element: ResolvedElement): string {

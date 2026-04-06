@@ -12,6 +12,12 @@ let ws: WebSocket | null = null;
 let vitestRpc: any = null;
 let storedConfig: any = null;
 
+// Serial task queue — ensures only one run/collect executes at a time
+let _taskQueue: Promise<void> = Promise.resolve();
+function enqueue(fn: () => Promise<void>): void {
+  _taskQueue = _taskQueue.then(fn, fn);
+}
+
 // ── Status event system for UI ────────────────────────────────────
 
 type StatusListener = (status: HarnessStatus) => void;
@@ -232,10 +238,10 @@ export function connectToVitest(options: ConnectOptions = {}) {
               sendResponse({ type: 'started' });
               break;
             case 'run':
-              handleRun(msg.context);
+              enqueue(() => handleRun(msg.context));
               break;
             case 'collect':
-              handleCollect(msg.context);
+              enqueue(() => handleCollect(msg.context));
               break;
             case 'cancel':
               break;

@@ -2,9 +2,12 @@
  * vitest-react-native-runtime CLI
  *
  * Commands:
- *   init       Scaffold a new test harness Expo app
- *   doctor     Check environment for Android/iOS development tools
- *   help       Show this help message
+ *   init          Scaffold a new test harness Expo app
+ *   build         Build the test harness app for a platform
+ *   install       Boot a device and install the app
+ *   bootstrap     Build + install in one step
+ *   doctor        Check environment for Android/iOS development tools
+ *   help          Show this help message
  */
 
 export {};
@@ -18,9 +21,33 @@ switch (command) {
     break;
   }
 
+  case 'build': {
+    process.argv.splice(2, 1); // remove 'build', leaving [platform] [--app-dir ...]
+    await import('./build');
+    break;
+  }
+
+  case 'install': {
+    process.argv.splice(2, 1); // remove 'install', leaving [platform] [--app-dir ...]
+    await import('./install');
+    break;
+  }
+
+  case 'bootstrap': {
+    process.argv.splice(2, 1); // remove 'bootstrap', leaving [platform] [--app-dir ...]
+    await import('./bootstrap');
+    break;
+  }
+
   case 'doctor': {
     const { runDoctor } = await import('./doctor');
     process.exit(runDoctor());
+    break;
+  }
+
+  case 'boot-device': {
+    process.argv.splice(2, 1); // remove 'boot-device', leaving [platform]
+    await import('./boot-device');
     break;
   }
 
@@ -32,11 +59,17 @@ switch (command) {
   vitest-react-native-runtime — Native component testing for React Native
 
   Commands:
-    init       Scaffold a new test harness Expo app
-    doctor     Check your environment for Android/iOS development tools
+    init           Scaffold a new test harness Expo app
+    build          Build the test harness app for a platform
+    install        Boot a device/emulator and install the app
+    bootstrap      Build + install in one step
+    doctor         Check your environment for Android/iOS development tools
 
   Usage:
     npx vitest-react-native-runtime init [directory]
+    npx vitest-react-native-runtime build <android|ios> [--app-dir <path>]
+    npx vitest-react-native-runtime install <android|ios> [--app-dir <path>]
+    npx vitest-react-native-runtime bootstrap <android|ios> [--app-dir <path>]
     npx vitest-react-native-runtime doctor
 
   For running tests, add nativePlugin() to your vitest config:

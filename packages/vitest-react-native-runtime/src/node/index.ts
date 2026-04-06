@@ -43,10 +43,15 @@ export function nativePlugin(options: NativePluginOptions = {}): Plugin {
     mode,
   };
 
+  let _singletonWorker: ReturnType<typeof createNativePoolWorker> | null = null;
+
   const poolRunner = {
     name: 'native',
     createPoolWorker() {
-      return createNativePoolWorker(poolOptions as NativePoolOptions);
+      if (!_singletonWorker) {
+        _singletonWorker = createNativePoolWorker(poolOptions as NativePoolOptions);
+      }
+      return _singletonWorker;
     },
   };
 
@@ -56,6 +61,9 @@ export function nativePlugin(options: NativePluginOptions = {}): Plugin {
       const test = ((config as Record<string, unknown>).test as Record<string, unknown> | undefined) ?? {};
       (config as Record<string, unknown>).test = test;
       test.pool = poolRunner;
+      // All test files share one device/Metro/WebSocket — must be serial
+      test.maxWorkers = 1;
+      test.minWorkers = 1;
       if (!test.include) {
         test.include = DEFAULT_INCLUDE;
       }

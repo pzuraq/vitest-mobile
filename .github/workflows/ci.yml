@@ -59,11 +59,7 @@ jobs:
         run: npm run build --workspace=packages/vitest-react-native-runtime
 
       - name: Build test harness app
-        working-directory: app
-        run: |
-          npm install
-          npx expo prebuild --platform android --clean
-          cd android && ./gradlew assembleDebug
+        run: npm run app:build:android
 
       - name: Run E2E tests
         uses: ReactiveCircus/android-emulator-runner@v2
@@ -71,8 +67,9 @@ jobs:
           api-level: 35
           arch: x86_64
           script: |
-            adb install app/android/app/build/outputs/apk/debug/app-debug.apk
-            VITEST_E2E=1 VITEST_E2E_PLATFORM=android npx vitest run --config packages/vitest-react-native-runtime/vitest.config.e2e.ts
+            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+            npm run app:install:android
+            npm run test:e2e:android
 
   # ── E2E: iOS ───────────────────────────────────────────────────────────────
   e2e-ios:
@@ -92,20 +89,7 @@ jobs:
         run: npm run build --workspace=packages/vitest-react-native-runtime
 
       - name: Build test harness app
-        working-directory: app
-        run: |
-          npm install
-          npx expo prebuild --platform ios --clean
-          cd ios && pod install && cd ..
-          xcodebuild \
-            -workspace ios/vitest-native.xcworkspace \
-            -scheme vitest-native \
-            -sdk iphonesimulator \
-            -configuration Debug \
-            ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            -derivedDataPath build
+        run: npm run app:build:ios
 
       - name: Boot simulator
         run: |
@@ -124,12 +108,7 @@ jobs:
           xcrun simctl bootstatus "$SIM_ID" -b
 
       - name: Install app on simulator
-        run: |
-          APP_PATH=$(find app/build -name "vitest-native.app" -type d | head -1)
-          xcrun simctl install "$SIM_ID" "$APP_PATH"
+        run: npm run app:install:ios
 
       - name: Run E2E tests
-        run: npx vitest run --config packages/vitest-react-native-runtime/vitest.config.e2e.ts
-        env:
-          VITEST_E2E: '1'
-          VITEST_E2E_PLATFORM: ios
+        run: npm run test:e2e:ios

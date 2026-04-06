@@ -12,6 +12,12 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm test --workspace=packages/vitest-react-native-runtime",
+    "app:build:android": "npx vitest-react-native-runtime build android --app-dir ./app",
+    "app:build:ios": "npx vitest-react-native-runtime build ios --app-dir ./app",
+    "app:install:android": "npx vitest-react-native-runtime install android --app-dir ./app",
+    "app:install:ios": "npx vitest-react-native-runtime install ios --app-dir ./app",
+    "app:bootstrap:android": "npx vitest-react-native-runtime bootstrap android --app-dir ./app",
+    "app:bootstrap:ios": "npx vitest-react-native-runtime bootstrap ios --app-dir ./app",
     "test:e2e:android": "VITEST_E2E=1 VITEST_E2E_PLATFORM=android npx vitest run --config packages/vitest-react-native-runtime/vitest.config.e2e.ts",
     "test:e2e:ios": "VITEST_E2E=1 VITEST_E2E_PLATFORM=ios npx vitest run --config packages/vitest-react-native-runtime/vitest.config.e2e.ts",
     "release": "npm run build --workspace=packages/vitest-react-native-runtime && changeset publish"

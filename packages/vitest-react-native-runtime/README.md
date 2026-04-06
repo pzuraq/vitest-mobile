@@ -184,6 +184,8 @@ npx expo run:android
 
 ## CI
 
+The test app's `package.json` includes scripts for building and installing without a running device, making them suitable for CI.
+
 ### GitHub Actions (Android)
 
 ```yaml
@@ -194,22 +196,51 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
       - run: npm install
+      - run: npm run build:android
+        working-directory: test-app
       - uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
-          script: npx vitest run
+          script: |
+            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+            npm run install:android --prefix test-app
+            npx vitest run
 ```
 
-The test app must already be built and installed on the emulator image, or you can build it as part of the CI setup step.
+### GitHub Actions (iOS)
 
-### iOS (macOS runners only)
-
-```bash
-xcrun simctl boot <device-id>
-npx vitest run --config vitest.config.ios.ts
-```
+```yaml
+jobs:
+  native-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm install
+      - run: npm run build:ios
+        working-directory: test-app
+      - name: Boot simulator
+        run: |
+          SIM_ID=$(xcrun simctl list devices available -j \
+            | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          for runtime, devs in d['devices'].items():
+            for dev in devs:
+              if dev.get('isAvailable') and dev.get('udid'):
+                print(dev['udid']); exit()
+          ")
+          xcrun simctl boot "$SIM_ID"
+          xcrun simctl bootstatus "$SIM_ID" -b
+      - run: npm run install:ios --prefix test-app
+      - run: npx vitest run --config vitest.config.ios.ts
+        env:
+          VITEST_E2E_PLATFORM: ios
 
 ## License
 
