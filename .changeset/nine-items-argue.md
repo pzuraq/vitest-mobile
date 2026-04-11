@@ -1,5 +1,5 @@
 ---
-'vitest-react-native-runtime': minor
+'vitest-mobile': minor
 ---
 
-Initial release of vitest-react-native-runtime
+Initial release of vitest-mobile

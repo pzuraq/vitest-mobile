@@ -32,16 +32,27 @@ export default tseslint.config(
       // 'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       '@typescript-eslint/no-unused-vars': 'off',
       'prefer-const': 'off',
-      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-explicit-any': 'warn',
     },
   },
-  // Runtime files are bundled as CJS for React Native / Hermes — require() is intentional
   {
-    files: ['packages/vitest-react-native-runtime/src/runtime/**/*.{ts,tsx}'],
+    files: ['**/*.d.ts'],
+    rules: {
+      '@typescript-eslint/no-empty-object-type': 'off',
+    },
+  },
+  // Runtime files are bundled as CJS for React Native / Hermes.
+  // The test harness deliberately manipulates refs and state during render
+  // for test orchestration — these are not standard React components.
+  {
+    files: ['packages/vitest-mobile/src/runtime/**/*.{ts,tsx}'],
     rules: {
       '@typescript-eslint/no-require-imports': 'off',
       '@typescript-eslint/no-unsafe-function-type': 'off',
       '@typescript-eslint/triple-slash-reference': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/react-compiler': 'off',
+      'react-hooks/globals': 'off',
     },
   },
 );

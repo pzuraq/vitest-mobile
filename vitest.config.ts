@@ -1,8 +1,12 @@
 import { defineConfig } from 'vitest/config';
-import { nativePlugin } from 'vitest-react-native-runtime';
+import { nativePlugin } from 'vitest-mobile';
+
+const isRunMode = process.argv.includes('run') || !!process.env.CI;
 
 export default defineConfig({
   test: {
+    teardownTimeout: 500,
+    forceExit: isRunMode,
     projects: [
       {
         plugins: [nativePlugin({ platform: 'ios' })],

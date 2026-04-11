@@ -15,7 +15,7 @@ if ! adb devices 2>/dev/null | grep -q "device$"; then
 fi
 
 # Verify app is installed
-if ! adb shell pm list packages 2>/dev/null | grep -q "com.vitest.nativetest"; then
+if ! adb shell pm list packages 2>/dev/null | grep -q "com.vitest.mobile.harness"; then
   echo "ERROR: App not installed. Run: cd app && npx expo prebuild --platform android && npx expo run:android"
   exit 1
 fi

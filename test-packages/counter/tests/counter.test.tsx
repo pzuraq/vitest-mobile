@@ -1,7 +1,6 @@
-// HMR test trigger: 2
 import React from 'react';
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, cleanup, waitFor } from 'vitest-react-native-runtime/runtime';
+import { render, cleanup, waitFor } from 'vitest-mobile/runtime';
 import { CounterModule } from '../CounterModule';
 
 afterEach(async () => {
@@ -10,33 +9,26 @@ afterEach(async () => {
 
 describe('CounterModule', () => {
   it('renders initial count of zero', async () => {
-    const screen = render(<CounterModule userId="123" />);
-    const count = await screen.findByTestId('count-display');
-    expect(count).toHaveText('0');
+    const screen = await render(<CounterModule userId="123" />);
+    await expect.element(screen.getByTestId('count-display')).toHaveText('0');
   });
 
   it('increments on press', async () => {
-    const screen = render(<CounterModule userId="123" />);
-    const btn = await screen.findByTestId('increment-btn');
-    await btn.tap();
-    const count = screen.getByTestId('count-display');
-    await waitFor(() => {
-      expect(count).toHaveText('1');
-    });
+    const screen = await render(<CounterModule userId="123" />);
+    await screen.getByTestId('increment-btn').tap();
+    await expect.element(screen.getByTestId('count-display')).toHaveText('1');
   });
 
   it('renders compact variant', async () => {
-    const screen = render(<CounterModule userId="123" variant="compact" />);
-    const layout = await screen.findByTestId('compact-layout');
-    expect(layout).toBeVisible();
+    const screen = await render(<CounterModule userId="123" variant="compact" />);
+    await expect.element(screen.getByTestId('compact-layout')).toBeVisible();
   });
 
   it('calls onCountChange callback', async () => {
     const spy = { calls: [] as number[] };
-    const screen = render(<CounterModule userId="123" onCountChange={(n: number) => spy.calls.push(n)} />);
-    const btn = await screen.findByTestId('increment-btn');
-    await btn.tap();
-    await btn.tap();
+    const screen = await render(<CounterModule userId="123" onCountChange={(n: number) => spy.calls.push(n)} />);
+    await screen.getByTestId('increment-btn').tap();
+    await screen.getByTestId('increment-btn').tap();
     await waitFor(() => {
       expect(spy.calls).toEqual([1, 2]);
     });

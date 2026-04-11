@@ -26,5 +26,5 @@ test-app/ios/
 test-app/android/
 test-app/build/
 
-# vitest-react-native-runtime
-.vitest-native/
+# vitest-mobile (auto-generated)
+.vitest-mobile/

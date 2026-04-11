@@ -10,7 +10,7 @@ __fixtures__
 **/ios/build/
 **/ios/DerivedData/
 **/.expo/
-**/.vitest-native/
+**/.vitest-mobile/
 
 # Tooling internals
 .claude/

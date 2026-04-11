@@ -1,6 +1,6 @@
 # TODOs
 
-Tracked gaps and planned work for vitest-react-native-runtime.
+Tracked gaps and planned work for vitest-mobile.
 
 ---
 
@@ -10,7 +10,7 @@ Tracked gaps and planned work for vitest-react-native-runtime.
       Diagnosed via CDP: module registry had 0 modules. The app ran its embedded bundle because `expo-dev-client` was missing. Fixed by adding it to the init flow via `npx expo install expo-dev-client`.
 
 - [ ] **Add CDP debugger access (CLI)**
-      `npx vitest-react-native-runtime debug eval|status|logs` — connects to Hermes via CDP WebSocket. Written in `src/cli/debug.ts`.
+      `npx vitest-mobile debug eval|status|logs` — connects to Hermes via CDP WebSocket. Written in `src/cli/debug.ts`.
 
 - [ ] **Refactor require cycle: `setup.ts <-> pause.ts`**
       Extracted shared state into `state.ts`. No more circular dependency.
@@ -22,7 +22,7 @@ Tracked gaps and planned work for vitest-react-native-runtime.
 
 ## CLI enhancements — Keep agents on the happy path
 
-- [ ] **`npx vitest-react-native-runtime status`**
+- [ ] **`npx vitest-mobile status`**
       Single command that checks everything and reports:
   - Simulator/emulator booted? (which device, OS version)
   - App installed?
@@ -32,27 +32,27 @@ Tracked gaps and planned work for vitest-react-native-runtime.
   - App connected to Metro?
     Print a clear summary with pass/fail for each check.
 
-- [ ] **`npx vitest-react-native-runtime logs [--lines N]`**
-      Read the last N lines from `app/.vitest-native/metro.log`. Filtered to remove noise, show errors prominently. Falls back to device logs if metro log doesn't exist.
+- [ ] **`npx vitest-mobile logs [--lines N]`**
+      Read the last N lines from `app/.vitest-mobile/metro.log`. Filtered to remove noise, show errors prominently. Falls back to device logs if metro log doesn't exist.
 
-- [ ] **`npx vitest-react-native-runtime doctor` improvements**
+- [ ] **`npx vitest-mobile doctor` improvements**
       Currently checks env tools. Should also check:
   - Is a simulator booted?
   - Is the app installed?
   - Is the app the latest build? (compare build hash or timestamp)
   - Are ports 8081/7878 free or already in use by expected processes?
 
-- [ ] **`npx vitest-react-native-runtime kill`**
+- [ ] **`npx vitest-mobile kill`**
       Clean up stuck state: kill Metro, kill WS server, free ports 8081 and 7878. Agents currently have to do `lsof -ti :8081 | xargs kill -9` manually.
 
-- [ ] **`npx vitest-react-native-runtime bundle-check`**
+- [ ] **`npx vitest-mobile bundle-check`**
       Fetch the Metro bundle, analyze module count, check for resolution errors. Quick sanity check that the bundle is healthy before running tests.
 
 ---
 
 ## Metro / Build
 
-- [x] **Persist metro logs to `.vitest-native/metro.log`**
+- [x] **Persist metro logs to `.vitest-mobile/metro.log`**
       Pool now writes all Metro stdout/stderr to disk so agents can read logs after the fact.
 
 - [x] **Rewrite `init` command to use `create-expo-app`**
@@ -62,7 +62,7 @@ Tracked gaps and planned work for vitest-react-native-runtime.
       Pool starts Metro without `--clear`. Adding it didn't fix the runtime error. The real issue might be `lazy=true` in the bundle URL (from Expo dev client manifest). Need to check if non-lazy bundle works.
 
 - [ ] **Add root `npm run build` script**
-      Currently must use `npm run build -w packages/vitest-react-native-runtime`. Add a root alias.
+      Currently must use `npm run build -w packages/vitest-mobile`. Add a root alias.
 
 ---
 
