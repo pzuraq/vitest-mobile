@@ -53,12 +53,14 @@ export class Locator {
     const cx = info.x + info.width / 2;
     const cy = info.y + info.height / 2;
     await NativeHarness.simulatePress((el as any).nativeId, cx, cy);
-    // Flush the native event pipeline: each round-trip through the UI thread
-    // ensures pending work (event delivery, React callbacks, Fabric commit)
-    // has been processed before the next interaction.
-    // On iOS: dispatch_async(main_queue) — matches Hammer's marker approach
-    // On Android: Choreographer frame callback — matches EventBeat's vsync
+    // Flush: Choreographer frame ensures EventBeat has ticked and
+    // dispatched the touch event to JS via RuntimeExecutor.
     await NativeHarness.flushUIQueue();
+    // Yield to the macrotask queue so React's batched state updates
+    // (scheduled via setImmediate/MessageChannel during the event handler)
+    // are processed before we continue.
+    await new Promise<void>(r => (globalThis as any).setImmediate?.(r) ?? setTimeout(r, 0));
+    // Final flush to ensure Fabric commits from the state update are done.
     await NativeHarness.flushUIQueue();
   }
 

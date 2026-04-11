@@ -13,8 +13,11 @@
     "format:check": "prettier --check .",
     "build": "npm run build --workspace=vitest-react-native-runtime",
     "dev": "npm run dev --workspace=vitest-react-native-runtime",
-    "test": "vitest run",
-    "test:dev": "vitest"
+    "test": "vitest run --project ios",
+    "test:ios": "vitest run --project ios",
+    "test:android": "vitest run --project android",
+    "test:dev": "vitest --project ios",
+    "test:dev:android": "vitest --project android"
   },
   "overrides": {
     "react": "19.1.0",

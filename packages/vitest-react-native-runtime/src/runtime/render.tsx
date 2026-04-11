@@ -5,7 +5,7 @@
 import React from 'react';
 import { getGlobalSetTestContent, getGlobalContainerRef, nextRenderKey } from './context';
 import { createLocatorAPI, type LocatorAPI } from './locator';
-import { getViewTree, getViewTreeString } from './tree';
+import { getViewTree, getViewTreeString, NativeHarness } from './tree';
 import type { ViewTreeNode } from './native-harness';
 
 export interface RenderOptions {
@@ -59,10 +59,14 @@ export async function cleanup(): Promise<void> {
   try {
     const setTestContent = getGlobalSetTestContent();
     setTestContent(null);
-    // Yield multiple times to ensure React commits the unmount
-    // and Fabric removes the native views
+    // Yield to let React schedule the unmount commit
     await yield_();
     await yield_();
+    // Flush the native UI queue to ensure Fabric has committed the
+    // unmount and removed old native views before the next test renders.
+    // Without this, findByTestId can match stale views from the
+    // previous test on slow devices.
+    await NativeHarness.flushUIQueue();
     await yield_();
   } catch {
     // If provider not mounted yet, nothing to clean up
