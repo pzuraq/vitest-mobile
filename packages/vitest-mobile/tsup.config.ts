@@ -7,7 +7,7 @@ export default defineConfig([
       'node/pool': 'src/node/pool.ts',
 
       'node/environment': 'src/node/environment.ts',
-      'node/device': 'src/node/device.ts',
+      'node/device': 'src/node/device/index.ts',
     },
     format: ['esm', 'cjs'],
     dts: false,
@@ -56,7 +56,10 @@ export default defineConfig([
     clean: false,
   },
   {
-    entry: { 'metro/withNativeTests': 'src/metro/withNativeTests.ts' },
+    entry: {
+      'metro/withNativeTests': 'src/metro/withNativeTests.ts',
+      'metro/transformer': 'src/metro/transformer.ts',
+    },
     format: ['cjs'],
     outDir: 'dist',
     target: 'node18',
@@ -64,6 +67,8 @@ export default defineConfig([
     splitting: false,
     sourcemap: true,
     clean: false,
+    noExternal: [],
+    external: [/^[^./]/],
   },
   {
     entry: { 'cli/index': 'src/cli/index.ts' },

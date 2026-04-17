@@ -74,7 +74,3 @@ export function isRerunMessage(msg: BiRpcMessage): msg is RerunMessage & BiRpcMe
 export function isCancelMessage(msg: BiRpcMessage): msg is CancelMessage & BiRpcMessage {
   return '__cancel' in msg && msg.__cancel === true;
 }
-
-export function isVitestWorkerRequest(msg: BiRpcMessage): msg is VitestWorkerRequest {
-  return msg.__vitest_worker_request__ === true;
-}

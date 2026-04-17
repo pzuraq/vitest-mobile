@@ -2,7 +2,7 @@
  * Pause API — freeze test execution indefinitely for interactive development.
  *
  * When pause() is called in a test:
- *   - dev mode: blocks until resumed (via Enter key, CLI command, or file edit)
+ *   - dev mode: blocks until resumed (via Enter key, UI resume button, or file edit)
  *   - run mode: throws an error (forces cleanup before CI)
  *
  * Component HMR updates render live while paused.

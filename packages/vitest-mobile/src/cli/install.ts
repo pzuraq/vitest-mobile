@@ -25,6 +25,14 @@ export async function install(platform: string, options: InstallOptions): Promis
     bundleId = options.buildResult.bundleId;
   } else {
     const rnVersion = detectReactNativeVersion(appDir);
+    if (!rnVersion) {
+      throw new Error(
+        'Could not auto-detect React Native version (react-native not found in node_modules).\n' +
+          'Install react-native first:\n  npm install react-native\n\n' +
+          'Or set reactNativeVersion explicitly in your Vitest config:\n' +
+          "  nativePlugin({ reactNativeVersion: '0.81.5' })",
+      );
+    }
     const result = await ensureHarnessBinary({
       platform: platform as 'ios' | 'android',
       reactNativeVersion: rnVersion,

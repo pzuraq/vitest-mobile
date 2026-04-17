@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "splash.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "version": 1,
+    "author": "vitest-mobile"
+  }
+}

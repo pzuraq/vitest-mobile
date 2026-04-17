@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+{{DOCUMENT_TAG}}
+    <scenes>
+        <scene sceneID="EHf-IW-A2E">
+            <objects>
+                <viewController id="{{VC_ID}}" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="SplashImage" translatesAutoresizingMaskIntoConstraints="NO" id="Kdr-Md-lw4">
+                                <rect key="frame" x="56.5" y="286" width="280" height="280"/>
+                                <constraints>
+                                    <constraint firstAttribute="width" constant="280" id="Wid-th-c01"/>
+                                    <constraint firstAttribute="height" constant="280" id="Hei-gh-c01"/>
+                                </constraints>
+                            </imageView>
+                        </subviews>
+                        <viewLayoutGuide key="safeArea" id="Bcu-se-gPh"/>
+                        <color key="backgroundColor" red="0.11764705882352941" green="0.11764705882352941" blue="0.11764705882352941" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <constraints>
+                            <constraint firstItem="Kdr-Md-lw4" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="CnX-vm-c01"/>
+                            <constraint firstItem="Kdr-Md-lw4" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="CnY-vm-c01"/>
+                        </constraints>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="0" y="0"/>
+        </scene>
+    </scenes>
+    <resources>
+        <image name="SplashImage" width="280" height="280"/>
+    </resources>
+</document>

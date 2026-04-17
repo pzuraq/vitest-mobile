@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
 import { rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { ensureHarnessBinary, detectReactNativeVersion, getDefaultCacheDir } from '../node/harness-builder';
+import { ensureHarnessBinary, detectReactNativeVersion } from '../node/harness-builder';
+import { getCacheDir } from '../node/paths';
 import type { HarnessBuildResult } from '../node/harness-builder';
 
 const packageRoot = resolve(fileURLToPath(import.meta.url), '..', '..', '..');
@@ -13,13 +14,21 @@ export async function build(
   const appDir = resolve(process.cwd(), options.appDir);
 
   const rnVersion = detectReactNativeVersion(appDir);
+  if (!rnVersion) {
+    throw new Error(
+      'Could not auto-detect React Native version (react-native not found in node_modules).\n' +
+        'Install react-native first:\n  npm install react-native\n\n' +
+        'Or set reactNativeVersion explicitly in your Vitest config:\n' +
+        "  nativePlugin({ reactNativeVersion: '0.81.5' })",
+    );
+  }
 
   console.log(`\nBuilding ${platform} harness binary...`);
   console.log(`  React Native: ${rnVersion}`);
   console.log(`  App dir: ${appDir}\n`);
 
   if (options.force) {
-    const cacheDir = getDefaultCacheDir();
+    const cacheDir = getCacheDir();
     console.log('  --force: clearing build cache...');
     try {
       rmSync(resolve(cacheDir, 'builds'), { recursive: true, force: true });

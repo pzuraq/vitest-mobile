@@ -18,9 +18,11 @@ vi.mock('../../src/node/device', () => ({
 
 vi.mock('../../src/node/harness-builder', () => ({
   detectReactNativeVersion: vi.fn(() => '0.76.0'),
-  ensureHarnessBinary: vi.fn(async () => ({
+  findHarnessBinary: vi.fn(() => ({
     binaryPath: '',
     bundleId: 'com.vitest.mobile.harness',
+    cached: true,
+    cacheKey: 'test-key',
   })),
 }));
 
@@ -73,7 +75,6 @@ function poolOptions(port: number, metroPort: number, appDir: string): NativePoo
     appDir,
     skipIfUnavailable: false,
     headless: true,
-    shutdownEmulator: false,
     verbose: false,
     mode: 'run',
     testInclude: ['**/*.test.ts'],
