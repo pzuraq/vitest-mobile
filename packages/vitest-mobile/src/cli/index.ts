@@ -178,16 +178,31 @@ cli
 cli
   .command('cache-key <platform>', 'Print the deterministic cache key for the harness build')
   .option('--app-dir <dir>', 'App directory', { default: '.' })
-  .action(async (platform: string, options: { appDir: string }) => {
+  .option('--native-modules <modules>', 'Comma-separated list of native modules')
+  .action(async (platform: string, options: { appDir: string; nativeModules?: string }) => {
     const { fileURLToPath } = await import('node:url');
     const packageRoot = resolve(fileURLToPath(import.meta.url), '..', '..', '..');
     const appDir = resolve(process.cwd(), options.appDir);
     const { detectReactNativeVersion, computeCacheKey } = await import('../node/harness-builder');
     const rnVersion = detectReactNativeVersion(appDir);
+    if (!rnVersion) {
+      console.error(
+        'Could not auto-detect React Native version (react-native not found in node_modules).\n' +
+          'Install react-native first:\n  npm install react-native\n\n' +
+          'Or set reactNativeVersion explicitly in your Vitest config:\n' +
+          "  nativePlugin({ reactNativeVersion: '0.81.5' })",
+      );
+      process.exit(1);
+    }
+    const nativeModules = options.nativeModules
+      ? options.nativeModules
+          .split(',')
+          .map(m => m.trim())
+          .filter(Boolean)
+      : [];
     const key = computeCacheKey({
-      platform: platform as 'ios' | 'android',
       reactNativeVersion: rnVersion,
-      nativeModules: [],
+      nativeModules,
       packageRoot,
     });
     process.stdout.write(key);
@@ -213,9 +228,9 @@ function formatBytes(bytes: number): string {
 }
 
 cli.command('clean', 'Remove all cached harness binaries and generated files').action(async () => {
-  const { getDefaultCacheDir } = await import('../node/harness-builder');
+  const { getCacheDir } = await import('../node/paths');
 
-  const cacheDir = getDefaultCacheDir();
+  const cacheDir = getCacheDir();
   if (existsSync(cacheDir)) {
     rmSync(cacheDir, { recursive: true, force: true });
     console.log(`Removed cache directory: ${cacheDir}`);

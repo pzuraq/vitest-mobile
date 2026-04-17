@@ -24,7 +24,7 @@ import { checkEnvironment } from './environment';
 import { ensureDevice, launchApp, stopApp, getInstalledCacheKey } from './device';
 import { getAdbPath } from './exec-utils';
 import { captureScreenshot } from './screenshot';
-import { ensureHarnessBinary, detectReactNativeVersion } from './harness-builder';
+import { findHarnessBinary, detectReactNativeVersion } from './harness-builder';
 import { startMetroServer, type MetroServer as MetroRunnerServer, type BundleManifest } from './metro-runner';
 import { registerPlatform, unregisterPlatform, closeServer } from './connections';
 import {
@@ -439,7 +439,7 @@ export function createNativePoolWorker(options: NativePoolOptions) {
     log.info('');
     log.info(pc.bold(pc.yellow(`⏸  PAUSED${label}`)));
     log.info('Component is rendered on device. Edit files — HMR will update live.');
-    log.info(`Resume: Press Enter or run ${pc.cyan('npx vitest-mobile resume')}`);
+    log.info(`Resume: Press ${pc.cyan('Enter')} or use the resume button in the UI`);
 
     if (msg.screenshot !== false) {
       try {
@@ -558,16 +558,29 @@ export function createNativePoolWorker(options: NativePoolOptions) {
       }
     } else {
       const packageRoot = resolve(__dirname, '..', '..');
-      const rnVersion = detectReactNativeVersion(appDir);
+      const rnVersion = options.reactNativeVersion ?? detectReactNativeVersion(appDir);
+      if (!rnVersion) {
+        throw new Error(
+          'Could not auto-detect React Native version (react-native not found in node_modules).\n' +
+            'Either install react-native or set reactNativeVersion explicitly in your Vitest config:\n\n' +
+            "  nativePlugin({ reactNativeVersion: '0.81.5' })",
+        );
+      }
       log.info(`React Native version: ${rnVersion}`);
 
-      const harnessResult = await ensureHarnessBinary({
+      const harnessResult = findHarnessBinary({
         platform,
         reactNativeVersion: rnVersion,
         nativeModules: options.nativeModules ?? [],
         packageRoot,
-        projectRoot: appDir,
       });
+
+      if (!harnessResult) {
+        throw new Error(
+          `No harness binary found for ${platform}. Build it first:\n\n` +
+            `  npx vitest-mobile bootstrap ${platform}\n`,
+        );
+      }
 
       bundleId = harnessResult.bundleId;
       binaryPath = harnessResult.binaryPath;
@@ -646,7 +659,7 @@ export function createNativePoolWorker(options: NativePoolOptions) {
     async function launchWithRetry(): Promise<void> {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          launchApp(platform, bundleId, { metroPort, deviceId });
+          await launchApp(platform, bundleId, { metroPort, deviceId });
           return;
         } catch (err) {
           if (attempt === 0) {
@@ -681,7 +694,7 @@ export function createNativePoolWorker(options: NativePoolOptions) {
       } catch {
         log.info('App not connected, launching...');
         try {
-          launchApp(platform, bundleId, { metroPort, deviceId });
+          await launchApp(platform, bundleId, { metroPort, deviceId });
         } catch {
           stopApp(platform, bundleId, deviceId);
           await new Promise<void>(r => {

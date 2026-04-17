@@ -1,20 +1,16 @@
 /**
  * vitest-mobile — Node-side entry point.
  *
- * Scaffold a test app:
- *   npx vitest-mobile init ./test-app
- *
- * Then add the plugin to your vitest config:
+ * Add the plugin to your vitest config:
  *   import { nativePlugin } from 'vitest-mobile'
  *   export default defineConfig({
- *     plugins: [nativePlugin({ appDir: './test-app' })],
+ *     plugins: [nativePlugin({ platform: 'ios' })],
  *     test: { include: ['native-tests/**\/*.test.tsx'] },
  *   })
  */
 
 import type { Plugin, UserConfig } from 'vite';
 import { createNativePoolWorker } from './pool';
-import { resolve } from 'node:path';
 import type { NativePluginOptions, NativePoolOptions, PoolMode } from './types';
 
 const DEFAULT_INCLUDE = ['**/native-tests/**/*.test.tsx', '**/native-tests/**/*.test.ts'];
@@ -70,13 +66,12 @@ export function nativePlugin(options: NativePluginOptions = {}): Plugin {
     port: options.port,
     metroPort: options.metroPort,
     platform: options.platform ?? 'android',
-    bundleId: options.bundleId,
-    appDir: options.appDir ? resolve(process.cwd(), options.appDir) : process.cwd(),
-    deviceId: options.deviceId ?? options.device,
+    appDir: process.cwd(),
+    deviceId: options.device,
     skipIfUnavailable: options.skipIfUnavailable ?? false,
     headless: options.headless ?? mode === 'run',
-    shutdownEmulator: options.shutdownEmulator ?? mode === 'run',
     verbose: options.verbose ?? false,
+    reactNativeVersion: options.reactNativeVersion,
     nativeModules: options.nativeModules,
     harnessApp: options.harnessApp,
     promptForNewDevice: options.promptForNewDevice ?? true,

@@ -147,13 +147,6 @@ describe('nativePlugin', () => {
     );
   });
 
-  it('leaves bundleId undefined for auto-detect in pool worker', () => {
-    const plugin = nativePlugin();
-    const config = applyPlugin(plugin);
-    config.test!.pool!.createPoolWorker();
-    expect(vi.mocked(createNativePoolWorker)).toHaveBeenCalledWith(expect.objectContaining({ bundleId: undefined }));
-  });
-
   it('passes testInclude from config.test.include to pool options', () => {
     const plugin = nativePlugin();
     const config: TestConfig = { test: { include: ['custom/**/*.test.ts'] } };

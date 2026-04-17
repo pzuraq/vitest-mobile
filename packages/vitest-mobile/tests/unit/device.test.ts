@@ -72,26 +72,26 @@ beforeEach(() => {
 // ── launchApp ────────────────────────────────────────────────────────────────
 
 describe('launchApp', () => {
-  it('android: launches via monkey with bundle ID', () => {
+  it('android: launches via monkey with bundle ID', async () => {
     execReturns('');
-    launchApp('android', 'com.example.app', { metroPort: 8081 });
+    await launchApp('android', 'com.example.app', { metroPort: 8081 });
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     const monkey = calls.find(c => c.includes('monkey'));
     expect(monkey).toBeDefined();
     expect(monkey).toContain('com.example.app');
   });
 
-  it('android: uses serial when provided', () => {
+  it('android: uses serial when provided', async () => {
     execReturns('');
-    launchApp('android', 'com.vitest.app', { deviceId: 'emulator-5556' });
+    await launchApp('android', 'com.vitest.app', { deviceId: 'emulator-5556' });
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     const monkey = calls.find(c => c.includes('monkey'));
     expect(monkey).toContain('-s emulator-5556');
   });
 
-  it('android: force-stops the app before launching', () => {
+  it('android: force-stops the app before launching', async () => {
     execReturns('');
-    launchApp('android', 'com.example.app');
+    await launchApp('android', 'com.example.app');
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     const forceStop = calls.find(c => c.includes('force-stop'));
     expect(forceStop).toContain('com.example.app');
