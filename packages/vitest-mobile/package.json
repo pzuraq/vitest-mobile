@@ -4,6 +4,7 @@
   "description": "Run Vitest component tests inside a real React Native app with native touch synthesis",
   "license": "MIT",
   "type": "module",
+  "repository": "https://github.com/pzuraq/vitest-mobile",
   "exports": {
     ".": {
       "types": "./dist/node/index.d.ts",
