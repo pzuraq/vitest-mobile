@@ -1,30 +1,54 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { TouchableOpacity, StyleSheet, View, ScrollView } from 'react-native';
 import { useTheme } from '@shopify/restyle';
+import { component, useSignal } from 'signalium/react';
+import type { Task } from '@vitest/runner';
 import { Text } from './atoms';
 import { statusIcon, statusColor } from './status-utils';
 import type { Theme } from './theme';
-import type { TestTreeNode } from './types';
+import {
+  aggregateDuration,
+  aggregateStatus,
+  collectedFiles,
+  filterByStatus,
+  filterBySearch,
+  getChildren,
+  getTaskFields,
+  taskKind,
+  taskLabel,
+} from '../tasks';
+import { searchQuery, statusFilter } from '../store';
 
 interface TreeRowProps {
-  node: TestTreeNode;
+  task: Task;
   depth: number;
-  expanded: boolean;
-  onToggle: () => void;
-  onDetail: () => void;
+  collapsed: ReturnType<typeof useSignal<Set<string>>>;
+  onSelect: (task: Task) => void;
 }
 
-function TreeRow({ node, depth, expanded, onToggle, onDetail }: TreeRowProps) {
+const TreeRow = component<TreeRowProps>(function TreeRow({ task, depth, collapsed, onSelect }) {
   const { colors } = useTheme<Theme>();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const hasChildren = node.children.length > 0;
-  const isLeaf = node.type === 'test';
+  const kind = taskKind(task);
+  const isLeaf = kind === 'test';
+
+  const fields = isLeaf ? getTaskFields(task.id) : null;
+  const status = isLeaf ? (fields?.status.value ?? 'pending') : aggregateStatus(task);
+  const duration = isLeaf ? fields?.duration.value : aggregateDuration(task);
+
+  const collapsedSet = collapsed.value;
+  const expanded = !collapsedSet.has(task.id);
 
   return (
     <View style={[styles.row, { paddingLeft: 16 + depth * 16 }]}>
       {!isLeaf ? (
         <TouchableOpacity
-          onPress={onToggle}
+          onPress={() => {
+            const next = new Set(collapsedSet);
+            if (next.has(task.id)) next.delete(task.id);
+            else next.add(task.id);
+            collapsed.value = next;
+          }}
           style={styles.chevronZone}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
@@ -34,61 +58,44 @@ function TreeRow({ node, depth, expanded, onToggle, onDetail }: TreeRowProps) {
         <View style={styles.chevronSpacer} />
       )}
 
-      <TouchableOpacity onPress={onDetail} style={styles.rowBody}>
-        <Text style={[styles.statusIcon, { color: statusColor(node.status, colors) }]}>{statusIcon(node.status)}</Text>
+      <TouchableOpacity onPress={() => onSelect(task)} style={styles.rowBody}>
+        <Text style={[styles.statusIcon, { color: statusColor(status, colors) }]}>{statusIcon(status)}</Text>
         <Text numberOfLines={1} style={[styles.label, isLeaf && styles.labelLeaf]}>
-          {node.label}
+          {taskLabel(task)}
         </Text>
-        {node.duration != null && node.duration > 0 && (
-          <Text style={styles.duration}>{Math.round(node.duration)}ms</Text>
-        )}
+        {duration != null && duration > 0 && <Text style={styles.duration}>{Math.round(duration)}ms</Text>}
       </TouchableOpacity>
     </View>
   );
-}
+});
 
 interface TestTreeProps {
-  nodes: TestTreeNode[];
-  onSelectNode: (node: TestTreeNode) => void;
+  onSelectNode: (task: Task) => void;
   scrollable?: boolean;
 }
 
-export function TestTree({ nodes, onSelectNode, scrollable = true }: TestTreeProps) {
+export const TestTree = component<TestTreeProps>(function TestTree({ onSelectNode, scrollable = true }) {
   const { colors } = useTheme<Theme>();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const collapsed = useSignal<Set<string>>(new Set());
 
-  const toggleNode = useCallback((id: string) => {
-    setCollapsed(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+  // Apply filters reactively over the canonical Vitest tree.
+  const files = collectedFiles();
+  const filteredByStatus = filterByStatus(files, statusFilter.value);
+  const filtered = filterBySearch(filteredByStatus, searchQuery.value);
 
-  function renderNodes(nodes: TestTreeNode[], depth: number): React.ReactNode[] {
-    const elements: React.ReactNode[] = [];
-    for (const node of nodes) {
-      const isExpanded = !collapsed.has(node.id);
-      elements.push(
-        <TreeRow
-          key={node.id}
-          node={node}
-          depth={depth}
-          expanded={isExpanded}
-          onToggle={() => toggleNode(node.id)}
-          onDetail={() => onSelectNode(node)}
-        />,
-      );
-      if (isExpanded && node.children.length > 0 && node.type !== 'test') {
-        elements.push(...renderNodes(node.children, depth + 1));
+  function renderNodes(tasks: Task[], depth: number): React.ReactNode[] {
+    const out: React.ReactNode[] = [];
+    for (const task of tasks) {
+      out.push(<TreeRow key={task.id} task={task} depth={depth} collapsed={collapsed} onSelect={onSelectNode} />);
+      if (taskKind(task) !== 'test' && !collapsed.value.has(task.id)) {
+        out.push(...renderNodes(getChildren(task), depth + 1));
       }
     }
-    return elements;
+    return out;
   }
 
-  const content = renderNodes(nodes, 0);
+  const content = renderNodes(filtered as unknown as Task[], 0);
 
   if (!scrollable) {
     return <View>{content}</View>;
@@ -104,37 +111,44 @@ export function TestTree({ nodes, onSelectNode, scrollable = true }: TestTreePro
       )}
     </ScrollView>
   );
-}
+});
 
 interface MiniTreeProps {
-  nodes: TestTreeNode[];
-  onSelectNode: (node: TestTreeNode) => void;
+  tasks: Task[];
+  onSelectNode: (task: Task) => void;
 }
 
-export function MiniTree({ nodes, onSelectNode }: MiniTreeProps) {
+export const MiniTree = component<MiniTreeProps>(function MiniTree({ tasks, onSelectNode }) {
   const { colors } = useTheme<Theme>();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   return (
     <View style={styles.miniContainer}>
-      {nodes.map(node => (
-        <TouchableOpacity key={node.id} onPress={() => onSelectNode(node)} style={styles.miniRow}>
-          <Text style={[styles.statusIcon, { color: statusColor(node.status, colors) }]}>
-            {statusIcon(node.status)}
-          </Text>
-          <Text numberOfLines={1} style={styles.miniLabel}>
-            {node.label}
-          </Text>
-          {node.status === 'running' ? (
-            <Text style={styles.miniDuration}>Running...</Text>
-          ) : node.duration != null && node.duration > 0 ? (
-            <Text style={styles.miniDuration}>{Math.round(node.duration)}ms</Text>
-          ) : null}
-        </TouchableOpacity>
-      ))}
+      {tasks.map(task => {
+        const kind = taskKind(task);
+        const isLeaf = kind === 'test';
+        const fields = isLeaf ? getTaskFields(task.id) : null;
+        const status = isLeaf ? (fields?.status.value ?? 'pending') : aggregateStatus(task);
+        const duration = isLeaf ? fields?.duration.value : aggregateDuration(task);
+        const isRunning = status === 'running';
+
+        return (
+          <TouchableOpacity key={task.id} onPress={() => onSelectNode(task)} style={styles.miniRow}>
+            <Text style={[styles.statusIcon, { color: statusColor(status, colors) }]}>{statusIcon(status)}</Text>
+            <Text numberOfLines={1} style={styles.miniLabel}>
+              {taskLabel(task)}
+            </Text>
+            {isRunning ? (
+              <Text style={styles.miniDuration}>Running...</Text>
+            ) : duration != null && duration > 0 ? (
+              <Text style={styles.miniDuration}>{Math.round(duration)}ms</Text>
+            ) : null}
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
-}
+});
 
 const createStyles = (colors: Theme['colors']) =>
   StyleSheet.create({

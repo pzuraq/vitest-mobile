@@ -3,11 +3,12 @@
  * correct platform's pool worker based on a hello handshake.
  *
  * One WS server on a single port serves both iOS and Android. When an
- * app connects it sends { __hello: true, platform: "ios" }. The server
+ * app connects it sends a flatted `{ __hello: true, platform: "ios" }`. The server
  * looks up the registered handler for that platform and hands off the
  * socket. If no handler is registered, the app gets a clear error.
  */
 
+import { parse as flatParse, stringify as flatStringify } from 'flatted';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { log } from './logger';
 
@@ -101,21 +102,34 @@ function ensureServer(port: number): void {
       if (identified) return; // Shouldn't happen — listener is removed
 
       const raw = data.toString();
+      let msg: unknown;
       try {
-        const msg = JSON.parse(raw);
-        if (msg?.__hello && msg.platform) {
+        try {
+          msg = flatParse(raw);
+        } catch {
+          msg = JSON.parse(raw);
+        }
+        if (
+          msg &&
+          typeof msg === 'object' &&
+          (msg as { __hello?: unknown }).__hello &&
+          (msg as { platform?: string }).platform
+        ) {
           clearTimeout(helloTimeout);
           identified = true;
           socket.removeListener('message', onMessage);
 
-          const handler = _platformHandlers.get(msg.platform);
+          const handler = _platformHandlers.get((msg as { platform: string }).platform);
           if (!handler) {
             const active = [..._platformHandlers.keys()];
             const activeStr =
               active.length > 0
                 ? `Only ${active.join(', ')} ${active.length === 1 ? 'is' : 'are'} active.`
                 : 'No platforms are active.';
-            sendError(socket, `Vitest project for ${msg.platform} is not running. ${activeStr}`);
+            sendError(
+              socket,
+              `Vitest project for ${(msg as { platform: string }).platform} is not running. ${activeStr}`,
+            );
             socket.close();
             return;
           }
@@ -149,7 +163,7 @@ function ensureServer(port: number): void {
 
 function sendError(socket: WebSocket, message: string): void {
   try {
-    socket.send(JSON.stringify({ __error: true, message }));
+    socket.send(flatStringify({ type: 'error', data: { message } }));
   } catch {
     /* ignore */
   }

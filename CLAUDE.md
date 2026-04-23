@@ -153,22 +153,6 @@ The `debug eval` command is the primary tool for inspecting app state from outsi
 - `__r.getModules()` may return empty with lazy bundling
 - `__r.resolveWeak()` only works at bundle time, not dynamically
 
-### Useful Eval Expressions
-
-```bash
-# Check test file registry
-npx vitest-mobile debug eval "JSON.stringify(Object.keys(globalThis.__TEST_FILES__ || {}))"
-
-# Check if a test module has the babel plugin's __run wrapper
-npx vitest-mobile debug eval "(function() { var f = globalThis.__TEST_FILES__; var m = f && f['counter/counter.test.tsx'](); return JSON.stringify({ hasRun: typeof m?.__run, keys: Object.keys(m || {}) }); })()"
-
-# Check HMR listener state
-npx vitest-mobile debug eval "globalThis.__TEST_HMR_LISTENERS__?.size ?? 'none'"
-
-# Trigger HMR listeners manually (simulate file change)
-npx vitest-mobile debug eval "(function() { var l = globalThis.__TEST_HMR_LISTENERS__; if (l) { l.forEach(function(fn) { fn('counter/counter.test.tsx'); }); return 'notified ' + l.size; } return 'no listeners'; })()"
-```
-
 ## CI/CD Pipeline
 
 The repository uses GitHub Actions (`.github/workflows/ci.yml`). The pipeline runs on pushes to `main` and on pull requests.
@@ -250,25 +234,29 @@ Changesets are committed as markdown files in `.changeset/` and consumed during 
 
 ### Package Source (`packages/vitest-mobile/src/`)
 
-| Path                           | Purpose                                                  |
-| ------------------------------ | -------------------------------------------------------- |
-| `runtime/harness.tsx`          | Root component for the test harness app                  |
-| `runtime/runner.ts`            | VitestRunner implementation — importFile, onAfterRunTask |
-| `runtime/vitest-shim.ts`       | Metro resolves `vitest` → this shim                      |
-| `runtime/expect-setup.ts`      | Sets up chai + @vitest/expect for Hermes                 |
-| `runtime/setup.ts`             | WebSocket connection to Vitest pool (connected mode)     |
-| `runtime/context.tsx`          | TestContainerProvider — where render() puts components   |
-| `runtime/pause.ts`             | Pause/resume test execution                              |
-| `runtime/screenshot.ts`        | Screenshot API                                           |
-| `babel/test-wrapper-plugin.ts` | Babel plugin wrapping test files                         |
-| `metro/transformer.ts`         | Custom Metro transformer that injects the babel plugin   |
-| `metro/withNativeTests.ts`     | Metro config helper                                      |
-| `node/pool.ts`                 | Vitest custom pool worker                                |
-| `runtime/symbolicate.ts`       | Stack trace symbolication via Metro's /symbolicate       |
-| `node/device.ts`               | Device management (boot, launch, screenshot)             |
-| `node/code-frame.ts`           | Syntax-highlighted code snippets for errors              |
-| `cli/index.ts`                 | CLI dispatcher                                           |
-| `cli/debug.ts`                 | CDP debugging tools                                      |
+| Path                            | Purpose                                                     |
+| ------------------------------- | ----------------------------------------------------------- |
+| `runtime/harness.tsx`           | Root component for the test harness app                     |
+| `runtime/runtime.ts`            | HarnessRuntime — root DI container, owns state + connection |
+| `runtime/runner.ts`             | VitestRunner implementation — importFile, onAfterRunTask    |
+| `runtime/worker.ts`             | `vitest/worker.init()` adapter for birpc over WebSocket     |
+| `runtime/connection.ts`         | WebSocket transport (DevicePoolConnection)                  |
+| `runtime/test-context.ts`       | `require.context`-backed test file lookup + HMR notify      |
+| `runtime/tasks.ts`              | Per-task reactive side-table + tree helpers + aggregates    |
+| `runtime/vitest-shim.ts`        | Metro resolves `vitest` → this shim                         |
+| `runtime/expect-setup.ts`       | Sets up chai + @vitest/expect for Hermes                    |
+| `runtime/context.tsx`           | TestContainerProvider — where render() puts components      |
+| `runtime/pause.ts`              | Pause/resume test execution                                 |
+| `runtime/store.ts`              | Shared signal store — UI/transport flags                    |
+| `babel/test-wrapper-plugin.ts`  | Babel plugin wrapping test files                            |
+| `babel/vitest-compat-plugin.ts` | Babel plugin rewriting Vitest dist for Hermes/Metro         |
+| `metro/transformer.cjs`         | Generated at runtime per-instance; wraps RN's transformer   |
+| `metro/vitest-stubs/`           | Hermes-safe stubs for `node:*` / `vite/module-runner`       |
+| `node/pool.ts`                  | Vitest custom pool worker                                   |
+| `runtime/symbolicate.ts`        | Stack trace symbolication via Metro's /symbolicate          |
+| `node/device/`                  | Device management (boot, launch, screenshot)                |
+| `cli/index.ts`                  | CLI dispatcher                                              |
+| `cli/debug.ts`                  | CDP debugging tools                                         |
 
 ### Root App Files
 
@@ -301,7 +289,8 @@ xcrun simctl launch booted com.vitest.mobile.harness --initialUrl "http://127.0.
 ## Known Gaps
 
 - **Cannot run tests programmatically via CDP** — `require()` doesn't work in Hermes CDP eval. Tests must be triggered via HMR file changes.
-- **HMR re-runs not fully working** — Notification chain works but re-execution has issues with module cache and test result collection. Active area of development.
+- **Device-side `cancel` is inert** — the pool relays `cancel` to the device but `init()`'s switch has no `cancel` handler and nothing calls `state.onCancel`. A run in progress can't be cancelled mid-flight from the pool side. See `docs/architecture.md` §8 for the shape of a fix.
+- **Task state is append-only** — `HarnessRuntime.taskState` never reaps entries. Previously-seen task ids persist for the runtime's lifetime.
 - **No console log streaming to agent** — `Runtime.enable` times out on Hermes bridgeless. Logs only appear in Expo terminal.
 - **test.only / it.only may not work** — Needs verification.
 - **App reload fragile** — Pressing `r` sometimes produces 1-module bundle. Use terminate + relaunch.

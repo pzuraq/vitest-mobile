@@ -1,5 +1,16 @@
 /**
  * Shared types for vitest-mobile node-side modules.
+ *
+ * The pool worker reads from three atomic buckets:
+ *
+ * - `ResolvedNativePluginOptions`: user-configurable options (nested
+ *   harness/device/metro groups). Frozen after `withDefaults`.
+ * - `InternalPoolOptions`: plugin-computed values (appDir, mode,
+ *   testPatterns, outputDir). Not user-facing. Frozen once the plugin
+ *   finishes constructing the pool.
+ * - `RuntimeState`: mutable runtime-resolved values (instanceId, port,
+ *   metroPort, instanceDir, deviceId, bundleId, …). Populated by
+ *   `doStart` and mutated in place.
  */
 
 import type { ConfigT } from 'metro-config';
@@ -28,7 +39,7 @@ export interface MetroConfigContext {
 
 /**
  * Transform the auto-generated, harness-anchored Metro config before
- * vitest-mobile applies its test-specific overrides (test-registry shim,
+ * vitest-mobile applies its test-specific overrides (test-context shim,
  * vitest shim, babel transformer wrapper, etc).
  *
  * Return the modified config. Mutating the incoming object and returning it
@@ -36,66 +47,58 @@ export interface MetroConfigContext {
  */
 export type MetroConfigCustomizer = (config: ConfigT, context: MetroConfigContext) => ConfigT | Promise<ConfigT>;
 
-export interface NativePoolOptions {
-  port?: number;
-  metroPort?: number;
-  platform: Platform;
-  bundleId: string;
-  appDir: string;
-  deviceId?: string;
-  skipIfUnavailable: boolean;
-  headless: boolean;
-  verbose: boolean;
-  mode: PoolMode;
-  testInclude: string[];
+// ── Public user-config groups ──────────────────────────────────────
+
+/** Harness-related options — which binary to use and how it was built. */
+export interface HarnessOptions {
   /** Override the React Native version (auto-detected from node_modules by default). */
   reactNativeVersion?: string;
   /** Additional native modules to include in the harness binary. */
   nativeModules?: string[];
   /** Path to a pre-built .app/.apk to use instead of auto-building. */
-  harnessApp?: string;
-  /** Prompt before creating persistent device definitions when needed. */
-  promptForNewDevice?: boolean;
-  /** Use a pre-built JS bundle instead of Metro. Pass true for default path, or a path to the bundle directory. */
-  bundle?: boolean | string;
+  app?: string;
   /**
-   * How long to wait (ms) for the harness app to connect back after it's
-   * launched. Covers app process start, Metro's initial bundle compile,
-   * Hermes parse, and JS init. Increase for cold Metro caches or large
-   * monorepos. Default: 180000 (3 minutes).
+   * Override the harness app's bundle ID. Normally detected from app.json
+   * (Expo or RN flavors) and falling back to `com.vitest.mobile.harness`.
    */
-  appConnectTimeout?: number;
+  bundleIdOverride?: string;
+}
+
+/** Device-related options — which simulator/emulator to use and how to run it. */
+export interface DeviceOptions {
+  /** Preferred simulator/emulator ID. If unset, the pool picks one. */
+  preferredDeviceId?: string;
+  /** Run simulator/emulator in headless mode. Defaults to true in run mode. */
+  headless?: boolean;
+  /** Android API level for auto-provisioning a system image + AVD (e.g. 35). */
+  apiLevel?: number;
+}
+
+/** Metro / bundling options. */
+export interface MetroOptions {
+  /**
+   * Use a pre-built JS bundle instead of Metro. Pass `true` for the default
+   * path (`<appDir>/.vitest-mobile/bundle`), or a directory path.
+   */
+  bundle?: boolean | string;
   /**
    * Customize the Metro config that vitest-mobile uses for bundling tests.
    * See {@link NativePluginOptions.metro} for details.
    */
-  metro?: MetroConfigCustomizer;
+  customize?: MetroConfigCustomizer;
 }
 
+// ── User-facing plugin options ─────────────────────────────────────
+
+/**
+ * Options accepted by `nativePlugin(...)` in the user's vitest config.
+ * All fields optional; defaults are applied internally by `withDefaults`.
+ */
 export interface NativePluginOptions {
   platform?: Platform;
-  /** Override the React Native version (auto-detected from node_modules by default). */
-  reactNativeVersion?: string;
-  /** Additional native modules to include in the harness binary. */
-  nativeModules?: string[];
-  /** Path to a pre-built .app/.apk to use instead of auto-building. */
-  harnessApp?: string;
-  /** Simulator/emulator device name or ID. */
-  device?: string;
-  /** Run simulator/emulator in headless mode. Defaults to true in CI. */
-  headless?: boolean;
-  /** Skip native tests if environment is not available. */
-  skipIfUnavailable?: boolean;
-  /** Enable verbose logging. */
-  verbose?: boolean;
-  /** WebSocket port for pool-app communication. */
   port?: number;
-  /** Metro dev server port. */
   metroPort?: number;
-  /** Prompt before creating persistent simulator/emulator definitions when needed. */
-  promptForNewDevice?: boolean;
-  /** Use a pre-built JS bundle instead of Metro. Pass true for default path, or a path to the bundle directory. */
-  bundle?: boolean | string;
+  verbose?: boolean;
   /**
    * How long to wait (ms) for the harness app to connect back after it's
    * launched. Covers app process start, Metro's initial bundle compile,
@@ -103,36 +106,107 @@ export interface NativePluginOptions {
    * monorepos. Default: 180000 (3 minutes).
    */
   appConnectTimeout?: number;
-  /**
-   * Customize the Metro config used to bundle tests. The callback receives
-   * the auto-generated harness-anchored base config (with `react`,
-   * `react-native`, `react-native-safe-area-context`, and `@react-native/*`
-   * already pinned to the RN version the harness binary was built against)
-   * and must return the final config vitest-mobile should use.
-   *
-   * Prefer this over a project-level `metro.config.js` — that file would
-   * shadow the auto-generated config entirely, forcing you to re-implement
-   * harness anchoring by hand. This callback layers on top of the generated
-   * base so you only specify the deltas (extra `assetExts`, workspace
-   * `resolveRequest` hooks, monorepo watch folders, etc.).
-   */
-  metro?: MetroConfigCustomizer;
+  harness?: HarnessOptions;
+  device?: DeviceOptions;
+  metro?: MetroOptions;
 }
 
-export interface DeviceOptions {
-  wsPort?: number;
-  metroPort?: number;
-  deviceId?: string;
-  /** Bundle ID of the harness app — used to check if a device is already in use. */
-  bundleId?: string;
-  headless?: boolean;
-  instanceId?: string;
-  promptForNewDevice?: boolean;
-  /** Android API level for auto-provisioning a system image + AVD (e.g. 35). */
-  apiLevel?: number;
-  /** Project root — used to derive a stable, project-scoped simulator identity so vitest-mobile owns its own simulator instead of reusing the user's. */
-  appDir?: string;
+// ── Resolved (defaulted) variants ──────────────────────────────────
+
+export interface ResolvedHarnessOptions {
+  reactNativeVersion: string | undefined;
+  nativeModules: string[];
+  app: string | undefined;
+  bundleIdOverride: string | undefined;
 }
+
+export interface ResolvedDeviceOptions {
+  preferredDeviceId: string | undefined;
+  headless: boolean;
+  apiLevel: number | undefined;
+}
+
+export interface ResolvedMetroOptions {
+  bundle: boolean | string | undefined;
+  customize: MetroConfigCustomizer | undefined;
+}
+
+/** Pool options after `withDefaults` — frozen, every field concrete. */
+export interface ResolvedNativePluginOptions {
+  platform: Platform;
+  verbose: boolean;
+  appConnectTimeout: number;
+  /** User preference for the WebSocket port; `undefined` means "auto-pick". */
+  port: number | undefined;
+  /** User preference for the Metro port; `undefined` means "auto-pick". */
+  metroPort: number | undefined;
+  harness: ResolvedHarnessOptions;
+  device: ResolvedDeviceOptions;
+  metro: ResolvedMetroOptions;
+}
+
+// ── Plugin-computed pool context ───────────────────────────────────
+
+/**
+ * Values the plugin derives from process state / Vitest config and threads
+ * into the pool. Not user-facing — constructed by `nativePlugin` at config
+ * time. Frozen once the pool is up.
+ */
+export interface InternalPoolOptions {
+  /** Project root — `process.cwd()` at plugin-config time. */
+  appDir: string;
+  /** `'run'` when invoked as `vitest run` or in CI; `'dev'` for watch mode. */
+  mode: PoolMode;
+  /** Glob patterns mirroring Vitest's `test.include`. */
+  testPatterns: string[];
+  /** `<appDir>/.vitest-mobile` — stable base for pool artifacts. */
+  outputDir: string;
+}
+
+// ── Runtime-resolved state (mutable during doStart) ────────────────
+
+/**
+ * Values resolved during `doStart` (ports picked, instance registered,
+ * device claimed, harness binary identified). Mutated in place as startup
+ * progresses. Drivers read from this single bucket instead of a dozen
+ * plucked fields.
+ *
+ * `appDir` is the only always-required field — it's mirrored from
+ * {@link InternalPoolOptions.appDir} when the pool constructs its
+ * runtime and serves as a required argument when the CLI passes a
+ * minimal runtime literal to drivers (`ensureDevice(platform, { appDir }, …)`).
+ * Everything else is populated progressively and may be absent at the
+ * time a driver is called from the CLI.
+ */
+export interface RuntimeState {
+  /** Project root (mirrored from `InternalPoolOptions.appDir`; stable). */
+  appDir: string;
+  /** Populated by `resolveInstance`. */
+  instanceId?: string | null;
+  /** WebSocket port, populated by `resolveInstance`. */
+  port?: number;
+  /** Metro port, populated by `resolveInstance`. */
+  metroPort?: number;
+  /** `<outputDir>/instances/<instanceId>`, populated by `resolveInstance`. */
+  instanceDir?: string | null;
+  /** The device `ensureDevice` picked for this run. */
+  deviceId?: string;
+  /**
+   * Harness app's bundle ID. Seeded by `detectBundleId` during
+   * `withDefaults`; `resolveHarness` may override with the cached
+   * harness's specific value. Always concrete when the pool is the caller;
+   * the CLI may pass a minimal runtime that omits this for commands that
+   * don't need it.
+   */
+  bundleId?: string;
+  /**
+   * Scaffolded harness project directory
+   * (`<cache>/builds/<key>/project`). Populated by `resolveHarness`.
+   */
+  harnessProjectDir?: string;
+}
+
+// ── Environment check types ────────────────────────────────────────
 
 export interface EnvironmentCheck {
   ok: boolean;

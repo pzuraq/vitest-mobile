@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join, resolve } from 'node:path';
-import type { Platform } from './types';
+import type { InternalPoolOptions, Platform, ResolvedNativePluginOptions, RuntimeState } from './types';
 
 const INSTANCES_FILE = 'instances.json';
 const DEFAULT_WS_BASE_PORT = 17878;
@@ -12,26 +12,21 @@ export interface InstanceRecord {
   instanceId: string;
   pid: number;
   platform: Platform;
+  /** Persisted name — kept as `wsPort` on disk for backward-compat with existing instances.json. */
   wsPort: number;
   metroPort: number;
+  /** Per-instance directory. Persisted name — keeps backward-compat with existing instances.json. */
   outputDir: string;
   deviceId?: string;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface ResolveInstanceOptions {
-  appDir: string;
-  platform: Platform;
-  wsPort?: number;
-  metroPort?: number;
-}
-
 export interface ResolvedInstanceResources {
   instanceId: string;
-  wsPort: number;
+  port: number;
   metroPort: number;
-  outputDir: string;
+  instanceDir: string;
   activeInstances: InstanceRecord[];
 }
 
@@ -164,14 +159,23 @@ function createInstanceId(platform: Platform): string {
   return `${platform}-${stamp}-${rand}`;
 }
 
-export async function resolveInstanceResources(options: ResolveInstanceOptions): Promise<ResolvedInstanceResources> {
-  ensureStateDir(options.appDir);
-  const activeInstances = pruneAndGetActiveInstances(options.appDir);
+/**
+ * Pick free WS/Metro ports, mint an instanceId, and make the per-instance
+ * output directory. The caller should copy the return values onto the
+ * pool's {@link RuntimeState}.
+ */
+export async function resolveInstanceResources(
+  options: Pick<ResolvedNativePluginOptions, 'platform' | 'port' | 'metroPort'>,
+  internal: Pick<InternalPoolOptions, 'appDir'>,
+): Promise<ResolvedInstanceResources> {
+  const { appDir } = internal;
+  ensureStateDir(appDir);
+  const activeInstances = pruneAndGetActiveInstances(appDir);
 
   const usedWs = new Set(activeInstances.map(i => i.wsPort));
   const usedMetro = new Set(activeInstances.map(i => i.metroPort));
 
-  let wsPort = options.wsPort;
+  let wsPort = options.port;
   let metroPort = options.metroPort;
 
   if (wsPort !== undefined) {
@@ -187,15 +191,37 @@ export async function resolveInstanceResources(options: ResolveInstanceOptions):
   }
 
   const instanceId = createInstanceId(options.platform);
-  const outputDir = resolve(options.appDir, '.vitest-mobile', 'instances', instanceId);
-  mkdirSync(outputDir, { recursive: true });
+  const instanceDir = resolve(appDir, '.vitest-mobile', 'instances', instanceId);
+  mkdirSync(instanceDir, { recursive: true });
 
-  return { instanceId, wsPort, metroPort, outputDir, activeInstances };
+  return { instanceId, port: wsPort, metroPort, instanceDir, activeInstances };
 }
 
-export function registerInstanceRecord(appDir: string, record: Omit<InstanceRecord, 'createdAt' | 'updatedAt'>): void {
-  const instances = pruneAndGetActiveInstances(appDir);
+/**
+ * Write this instance's record to `instances.json`. Reads identity from
+ * the resolved {@link RuntimeState} and project root from {@link InternalPoolOptions}.
+ * Fills in `pid: process.pid` internally.
+ */
+export function registerInstanceRecord(
+  options: Pick<ResolvedNativePluginOptions, 'platform'>,
+  internal: Pick<InternalPoolOptions, 'appDir'>,
+  runtime: Pick<RuntimeState, 'instanceId' | 'port' | 'metroPort' | 'instanceDir' | 'deviceId'>,
+): void {
+  if (!runtime.instanceId || runtime.port === undefined || runtime.metroPort === undefined || !runtime.instanceDir) {
+    throw new Error('registerInstanceRecord called before resolveInstanceResources populated runtime state');
+  }
+  const instances = pruneAndGetActiveInstances(internal.appDir);
   const now = Date.now();
-  instances.push({ ...record, createdAt: now, updatedAt: now });
-  saveInstances(appDir, instances);
+  instances.push({
+    instanceId: runtime.instanceId,
+    pid: process.pid,
+    platform: options.platform,
+    wsPort: runtime.port,
+    metroPort: runtime.metroPort,
+    outputDir: runtime.instanceDir,
+    deviceId: runtime.deviceId,
+    createdAt: now,
+    updatedAt: now,
+  });
+  saveInstances(internal.appDir, instances);
 }

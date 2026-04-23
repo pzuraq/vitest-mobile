@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import type { EnvironmentCheck, EnvironmentResult, NamedCheck, Platform } from './types';
 import { run, getAndroidHome, getAdbPath } from './exec-utils';
 import { getCacheDir } from './paths';
+import { log } from './logger';
 
 interface SimctlListDevice {
   state?: string;
@@ -257,4 +258,23 @@ export function checkEnvironment(platform: Platform): EnvironmentResult {
     checks,
     issues: blocking,
   };
+}
+
+/**
+ * Run checks and throw with a printed issue list if the environment is not
+ * ready. No-op on success — the caller should continue. Previously there
+ * was a `skipIfUnavailable` option that turned this into a soft warning;
+ * that behavior is gone because per-platform bootstrap + per-project
+ * vitest projects make the legitimate use cases disappear.
+ */
+export function checkAndReportEnvironment(platform: Platform): void {
+  const result = checkEnvironment(platform);
+  if (result.ok) return;
+
+  log.error('\nEnvironment check failed:\n');
+  for (const issue of result.issues) {
+    log.error(`  ✗ ${issue.message}`);
+    if (issue.fix) log.error(`    Fix: ${issue.fix}\n`);
+  }
+  throw new Error('Environment not ready. See above for setup instructions.');
 }

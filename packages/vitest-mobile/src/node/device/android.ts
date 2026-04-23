@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 import { log } from '../logger';
 import { run, getAndroidHome, getAdbPath } from '../exec-utils';
 import { getCacheDir } from '../paths';
-import type { DeviceOptions } from '../types';
+import type { DeviceOptions, RuntimeState } from '../types';
 import type { DeviceDriver } from './index';
 import { DEFAULT_BUNDLE_ID, isPortListening, isPidAlive, errorMessage } from './shared';
 import { getDeviceMapping } from './mapping';
@@ -593,17 +593,17 @@ function getAndroidInstalledCacheKey(bundleId: string, deviceId?: string): strin
 // ── DeviceDriver implementation ──────────────────────────────────
 
 export const androidDriver: DeviceDriver = {
-  async ensureDevice(opts: DeviceOptions): Promise<string | undefined> {
-    const bundleId = opts.bundleId ?? DEFAULT_BUNDLE_ID;
-    const wsPort = opts.wsPort ?? 7878;
-    const metroPort = opts.metroPort ?? 18081;
-    const effectiveAppDir = opts.appDir ?? process.cwd();
+  async ensureDevice(runtime: RuntimeState, device: DeviceOptions): Promise<string | undefined> {
+    const bundleId = runtime.bundleId ?? DEFAULT_BUNDLE_ID;
+    const wsPort = runtime.port ?? 7878;
+    const metroPort = runtime.metroPort ?? 18081;
+    const appDir = runtime.appDir;
 
     // The device-mapping file is authoritative about which AVD this project
     // uses. Bootstrap writes it; everything downstream reads it. If absent,
     // refuse to guess — running bootstrap is a one-time step and skipping
     // it used to silently create surprise AVDs.
-    const mapping = getDeviceMapping(effectiveAppDir, 'android');
+    const mapping = getDeviceMapping(appDir, 'android');
     if (!mapping) {
       throw new Error(
         `No Android device configured for this project. Run 'vitest-mobile bootstrap --platform android' first.`,
@@ -613,13 +613,14 @@ export const androidDriver: DeviceDriver = {
 
     const online = getAndroidOnlineSerials();
     // Explicit deviceId wins — caller took responsibility.
-    let selected = opts.deviceId ? online.find(s => s === opts.deviceId) : undefined;
+    const preferredDeviceId = device.preferredDeviceId ?? runtime.deviceId;
+    let selected = preferredDeviceId ? online.find(s => s === preferredDeviceId) : undefined;
     if (!selected) {
       // Reuse an online emulator only if it's serving *our* AVD.
       for (const s of online) {
         const runningAvd = getRunningEmulatorAVD(s);
         if (runningAvd !== targetAvd) continue;
-        if (!(await isAndroidDeviceActivelyInUse(s, bundleId, opts.instanceId))) {
+        if (!(await isAndroidDeviceActivelyInUse(s, bundleId, runtime.instanceId ?? undefined))) {
           selected = s;
           break;
         }
@@ -628,11 +629,11 @@ export const androidDriver: DeviceDriver = {
 
     if (!selected) {
       selected = await bootAndroidEmulator({
-        headless: opts.headless,
+        headless: device.headless,
         excludeSerials: online,
-        apiLevel: opts.apiLevel,
+        apiLevel: device.apiLevel,
         targetAvd,
-        appDir: opts.appDir,
+        appDir,
         // If the user originally picked "Create new", we own the AVD and
         // should recreate it if deleted externally. If they picked an
         // existing one, we won't touch it.
@@ -642,31 +643,26 @@ export const androidDriver: DeviceDriver = {
       log.verbose(`Android device already running (${selected})`);
     }
 
-    claimAndroidDevice(selected!, opts.instanceId ?? 'unknown', metroPort);
+    claimAndroidDevice(selected!, runtime.instanceId ?? 'unknown', metroPort);
     setupAndroidPorts(wsPort, metroPort, selected);
     writeAndroidDebugHost(bundleId, metroPort, selected);
     return selected;
   },
 
-  async launchApp(bundleId: string, opts: { metroPort?: number; deviceId?: string } = {}): Promise<void> {
-    await launchAndroidApp(bundleId, opts.metroPort ?? 18081, opts.deviceId);
+  // launchApp/stopApp/getInstalledCacheKey: bundleId + metroPort are always
+  // concrete when the pool calls these — withDefaults seeds bundleId and
+  // resolveInstance populates metroPort before launch. CLI paths don't
+  // reach these methods.
+  async launchApp(runtime: RuntimeState): Promise<void> {
+    await launchAndroidApp(runtime.bundleId!, runtime.metroPort!, runtime.deviceId);
   },
 
-  stopApp(bundleId: string, deviceId?: string): void {
-    stopAndroidApp(bundleId, deviceId);
+  stopApp(runtime: RuntimeState): void {
+    stopAndroidApp(runtime.bundleId!, runtime.deviceId);
   },
 
-  getInstalledCacheKey(bundleId: string, deviceId?: string): string | null {
-    return getAndroidInstalledCacheKey(bundleId, deviceId);
-  },
-
-  isDeviceOnline(): boolean {
-    return getAndroidOnlineSerials().length > 0;
-  },
-
-  getBootedDeviceId(): string | null {
-    const serials = getAndroidOnlineSerials();
-    return serials[0] ?? null;
+  getInstalledCacheKey(runtime: RuntimeState): string | null {
+    return getAndroidInstalledCacheKey(runtime.bundleId!, runtime.deviceId);
   },
 };
 

@@ -20,3 +20,6 @@ binary/ios/
 *.tgz
 
 *.local.json
+
+# Generated at build time
+README.md

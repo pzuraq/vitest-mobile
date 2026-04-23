@@ -124,7 +124,6 @@ import { render, cleanup, waitFor, screenshot, pause } from 'vitest-mobile/runti
 | `render(<Component />)`          | Mount a component into the test container. Returns a `Screen` with locator methods. |
 | `cleanup()`                      | Unmount the rendered component and flush the UI queue.                              |
 | `waitFor(fn, opts?)`             | Retry an assertion until it passes. Default 3s timeout, 50ms interval.              |
-| `screenshot(name?)`              | Capture the emulator screen, returns host file path (PNG).                          |
 | `pause({ label?, screenshot? })` | Block test execution until resumed.                                                 |
 
 ### Screen

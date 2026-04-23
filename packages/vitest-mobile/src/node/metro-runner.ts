@@ -9,18 +9,24 @@
 import { resolve, relative, dirname } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import type { Socket } from 'node:net';
 import { log } from './logger';
-import { generateTestRegistry } from '../metro/generateTestRegistry';
+import { attachMetroLogTap, type MetroLogTap } from './metro-log';
+import { globSync } from 'glob';
+import picomatch from 'picomatch';
+import { renderNodeTemplate } from './templates';
 import { detectReactNativeVersion, findHarnessBinary } from './harness-builder';
-import type { RunServerOptions, RunServerResult, Reporter } from 'metro';
+import type { RunServerOptions } from 'metro';
 import type { ConfigT, Middleware } from 'metro-config';
 import type { CustomResolutionContext, CustomResolver } from 'metro-resolver';
 import type connect from 'connect';
 import type { HandleFunction } from 'connect';
 import type { WebSocketServer } from 'ws';
-import type { MetroConfigCustomizer } from './types';
+import type { MetroConfigCustomizer, InternalPoolOptions, ResolvedNativePluginOptions, RuntimeState } from './types';
+
+const APP_MODULE_NAME = 'VitestMobileApp';
 
 // ── Lazy-loaded metro + metro-config ──────────────────────────────
 // Neither `metro` nor `metro-config` is a direct dependency of vitest-mobile.
@@ -33,9 +39,27 @@ interface MetroModules {
   metroConfig: typeof import('metro-config');
 }
 
+/**
+ * Return a `require` that resolves as if it were inside the scaffolded
+ * harness project. We anchor on `package.json` (always present after
+ * harness scaffold) rather than a fake filename — clearer intent, same
+ * resolution semantics.
+ */
+function harnessRequire(harnessProjectDir: string): NodeRequire {
+  return createRequire(resolve(harnessProjectDir, 'package.json'));
+}
+
+/**
+ * Return a `require` anchored at vitest-mobile's own package root, so
+ * specifiers go through our `exports` map rather than relative file-system
+ * walks that depend on dist layout.
+ */
+function selfRequire(): NodeRequire {
+  return createRequire(import.meta.url);
+}
+
 function loadMetroModules(harnessProjectDir: string): MetroModules {
-  const anchor = resolve(harnessProjectDir, '_vitest-mobile-anchor.js');
-  const req = createRequire(anchor);
+  const req = harnessRequire(harnessProjectDir);
   return {
     metro: req('metro') as typeof import('metro'),
     metroConfig: req('metro-config') as typeof import('metro-config'),
@@ -44,13 +68,17 @@ function loadMetroModules(harnessProjectDir: string): MetroModules {
 
 // ── Types ──────────────────────────────────────────────────────────
 
+/**
+ * Flattened options consumed by {@link prepareMetroConfig}. Callers build
+ * this from the pool buckets (`options` / `internal` / `runtime`) or
+ * directly (CLI `buildBundle`).
+ */
 export interface MetroRunnerOptions {
-  projectRoot: string;
+  appDir: string;
+  metroPort: number;
   port: number;
-  wsPort: number;
   platform: 'ios' | 'android';
   testPatterns: string[];
-  appModuleName: string;
   outputDir?: string;
   /**
    * Absolute path to the scaffolded harness project
@@ -108,14 +136,63 @@ export interface PreparedMetroConfig {
   config: ConfigT;
   entryPath: string;
   outputDir: string;
-  registryPath: string;
   testFiles: string[];
 }
 
-export async function prepareMetroConfig(options: MetroRunnerOptions): Promise<PreparedMetroConfig> {
-  const { projectRoot, port, wsPort, testPatterns, appModuleName } = options;
+function discoverTestFiles(appDir: string, testPatterns: string[]): string[] {
+  const testFiles: string[] = [];
+  for (const pattern of testPatterns) {
+    try {
+      testFiles.push(...globSync(pattern, { cwd: appDir }));
+    } catch {
+      /* ignore glob errors */
+    }
+  }
+  return [...new Set(testFiles)].sort();
+}
 
-  const outputDir = options.outputDir ?? resolve(projectRoot, '.vitest-mobile');
+/**
+ * Combine Vitest include patterns into a single regex source the device-side
+ * `require.context()` filter can use. Each glob is converted to a regex by
+ * picomatch — the same engine Vitest itself uses (via tinyglobby) — so the
+ * device's matched set stays in lockstep with the host's `cfg.include` matches.
+ *
+ * The combined regex also excludes any path containing a `node_modules/`
+ * segment (test fixtures shipped inside deps would otherwise be inlined into
+ * the bundle and fail unresolvable-import resolution in `'sync'` mode), and
+ * tolerates an optional leading `./` since Metro tests context-module keys
+ * with that prefix.
+ */
+function buildContextRegexSource(testPatterns: string[]): string {
+  if (testPatterns.length === 0) return '(?!)';
+  const sources = testPatterns.map(p => {
+    // Vitest passes `dot: true` to tinyglobby (see VitestProject.globFiles);
+    // mirror it here so the device's match set matches host-side glob results.
+    const re = picomatch.makeRe(p, { dot: true });
+    let s = re.source;
+    if (s.startsWith('^')) s = s.slice(1);
+    if (s.endsWith('$')) s = s.slice(0, -1);
+    return s;
+  });
+  return `^(?!.*\\/node_modules\\/)(?:\\.\\/)?(?:${sources.join('|')})$`;
+}
+
+export async function prepareMetroConfig(options: MetroRunnerOptions): Promise<PreparedMetroConfig> {
+  const { appDir, metroPort, port, testPatterns } = options;
+
+  // Inlined into the bundle by the inline-app-root babel plugin (needed
+  // before Metro's static analysis of `require.context(...)` in the device
+  // runtime's test-context.ts). jest-worker children inherit env at spawn,
+  // so setting it here on the parent reaches the transform workers spawned
+  // by metro.runServer / metro.runBuild below.
+  process.env.VITEST_MOBILE_APP_ROOT = appDir.split('\\').join('/');
+  // The require.context filter regex is also inlined by the babel plugin —
+  // it MUST mirror Vitest's `cfg.include` patterns or the device bundle
+  // would either pull in unrelated test files (Node integration tests in
+  // monorepo siblings) or miss user device tests entirely.
+  process.env.VITEST_MOBILE_TEST_PATTERN_SOURCE = buildContextRegexSource(testPatterns);
+
+  const outputDir = options.outputDir ?? resolve(appDir, '.vitest-mobile');
   mkdirSync(outputDir, { recursive: true });
   if (!existsSync(resolve(outputDir, '.gitignore'))) {
     writeFileSync(resolve(outputDir, '.gitignore'), '*\n');
@@ -124,16 +201,12 @@ export async function prepareMetroConfig(options: MetroRunnerOptions): Promise<P
   for (const plat of ['ios', 'android'] as const) {
     generateEntryPoint({
       entryPath: resolve(outputDir, `index.${plat}.js`),
-      appModuleName,
-      wsPort,
-      metroPort: port,
+      appModuleName: APP_MODULE_NAME,
+      wsPort: port,
+      metroPort,
     });
   }
-  const { filePath: registryPath, testFiles } = generateTestRegistry({
-    projectRoot,
-    testPatterns,
-    outputDir,
-  });
+  const testFiles = discoverTestFiles(appDir, testPatterns);
   log.info(`Discovered ${testFiles.length} test file(s)`);
 
   if (!options.harnessProjectDir) {
@@ -141,9 +214,9 @@ export async function prepareMetroConfig(options: MetroRunnerOptions): Promise<P
       'vitest-mobile: prepareMetroConfig requires harnessProjectDir — harness binary must be built first (run `npx vitest-mobile bootstrap <platform>`).',
     );
   }
-  const baseConfig = await loadMetroConfig(projectRoot, outputDir, options.harnessProjectDir);
+  const baseConfig = await loadMetroConfig(appDir, outputDir, options.harnessProjectDir);
   // Apply user customizer (if any) BEFORE our internal test transforms so
-  // that things like vitest shim resolution and the test-registry module
+  // that things like vitest shim resolution and the test-context module
   // alias remain authoritative — the customizer can't accidentally unwrap
   // them. User hooks like extra assetExts or a wrapping resolveRequest still
   // end up in the final config because applyTestTransforms preserves the
@@ -151,35 +224,72 @@ export async function prepareMetroConfig(options: MetroRunnerOptions): Promise<P
   const customizedBase = options.metro
     ? await options.metro(baseConfig, {
         harnessProjectDir: options.harnessProjectDir,
-        projectRoot,
+        projectRoot: appDir,
         platform: options.platform,
       })
     : baseConfig;
   const config = applyTestTransforms(customizedBase, {
-    projectRoot,
-    port,
-    registryPath,
+    projectRoot: appDir,
+    port: metroPort,
     outputDir,
     harnessProjectDir: options.harnessProjectDir,
   });
   const entryPath = resolve(outputDir, `index.${options.platform}.js`);
 
-  return { config, entryPath, outputDir, registryPath, testFiles };
+  return { config, entryPath, outputDir, testFiles };
 }
 
 // ── Public API ─────────────────────────────────────────────────────
 
-export async function startMetroServer(options: MetroRunnerOptions): Promise<MetroServer> {
-  if (!options.harnessProjectDir) {
+/**
+ * Start a Metro server for the pool. Accepts the pool's three atomic
+ * buckets directly — no field plucking at call sites.
+ */
+export async function startMetroServer(
+  options: Pick<ResolvedNativePluginOptions, 'platform' | 'metro'>,
+  internal: Pick<InternalPoolOptions, 'appDir' | 'testPatterns' | 'outputDir'>,
+  runtime: Pick<RuntimeState, 'port' | 'metroPort' | 'harnessProjectDir' | 'instanceDir'>,
+): Promise<MetroServer> {
+  if (!runtime.harnessProjectDir) {
     throw new Error(
-      'vitest-mobile: startMetroServer requires harnessProjectDir — harness binary must be built first (run `npx vitest-mobile bootstrap <platform>`).',
+      'vitest-mobile: startMetroServer requires harness.projectDir — harness binary must be built first (run `npx vitest-mobile bootstrap <platform>`).',
     );
   }
-  const { metro } = loadMetroModules(options.harnessProjectDir);
-  const { config, outputDir } = await prepareMetroConfig(options);
-  const { projectRoot, port } = options;
+  if (runtime.port === undefined || runtime.metroPort === undefined) {
+    throw new Error('vitest-mobile: startMetroServer called before ports were resolved');
+  }
+  const { metro } = loadMetroModules(runtime.harnessProjectDir);
+  const { config } = await prepareMetroConfig({
+    appDir: internal.appDir,
+    metroPort: runtime.metroPort,
+    port: runtime.port,
+    platform: options.platform,
+    testPatterns: internal.testPatterns,
+    outputDir: internal.outputDir,
+    harnessProjectDir: runtime.harnessProjectDir,
+    metro: options.metro.customize,
+  });
+  const { appDir: projectRoot } = internal;
+  const port = runtime.metroPort;
 
-  const { middleware: devMiddleware, websocketEndpoints } = loadDevMiddleware(projectRoot, port);
+  // Redirect Metro's own output to `<instanceDir|outputDir>/metro.log` by
+  // installing a file-backed Reporter. Metro's reporter is the sole path
+  // by which it writes to stdout (bundle progress, the welcome banner,
+  // device-forwarded `client_log` events, jest-worker stderr chunks,
+  // bundler errors), so swapping it keeps the terminal clean — only the
+  // pool's own `[vitest-mobile]` status lines stay visible — while
+  // retaining every Metro signal in the log file for debugging.
+  const metroLogDir = runtime.instanceDir ?? internal.outputDir;
+  const metroLogPath = resolve(metroLogDir, 'metro.log');
+  const tap: MetroLogTap = attachMetroLogTap(metroLogPath);
+  const configWithFileReporter: ConfigT = { ...config, reporter: tap.reporter };
+  log.info(`Metro log: ${metroLogPath}`);
+
+  const { middleware: devMiddleware, websocketEndpoints } = loadDevMiddleware(
+    projectRoot,
+    runtime.harnessProjectDir,
+    port,
+  );
 
   log.info(`Starting Metro on port ${port}...`);
 
@@ -203,7 +313,7 @@ export async function startMetroServer(options: MetroRunnerOptions): Promise<Met
     ...(devMiddleware ? { unstable_extraMiddleware: [devMiddleware] } : {}),
     ...(websocketEndpoints ? { websocketEndpoints } : {}),
   } as RunServerOptions;
-  const { httpServer } = await metro.runServer(config, runServerOpts);
+  const { httpServer } = await metro.runServer(configWithFileReporter, runServerOpts);
 
   // Track keep-alive TCP connections so we can forcibly destroy them on
   // close. `httpServer.close()` only waits for idle sockets; without this,
@@ -293,6 +403,16 @@ export async function startMetroServer(options: MetroRunnerOptions): Promise<Met
         }),
       ]);
 
+      // Close the Metro log tap LAST so any final Metro output emitted
+      // while httpServer / workers are tearing down still lands in the
+      // file. This also restores process.stdout/stderr.write to their
+      // originals so the rest of the Vitest run isn't tee'd.
+      try {
+        await tap.close();
+      } catch {
+        /* ignore — tap errors must not block shutdown */
+      }
+
       log.verbose('Metro server closed');
     },
   };
@@ -367,12 +487,11 @@ export async function buildBundle(options: BuildBundleOptions): Promise<BundleMa
     const { metro } = loadMetroModules(harnessResult.projectDir);
 
     const prepared = await prepareMetroConfig({
-      projectRoot,
-      port: metroPort,
-      wsPort,
+      appDir: projectRoot,
+      metroPort,
+      port: wsPort,
       platform,
       testPatterns,
-      appModuleName: 'VitestMobileApp',
       harnessProjectDir: harnessResult.projectDir,
       metro: options.metro,
     });
@@ -460,98 +579,34 @@ async function loadMetroConfig(
  * default resolver against `projectRoot` unchanged.
  */
 function buildGeneratedMetroConfig(opts: { projectRoot: string; harnessProjectDir: string }): string {
-  const { projectRoot, harnessProjectDir } = opts;
-  return `// Auto-generated by vitest-mobile — do not edit.
-const path = require('node:path');
-const { createRequire } = require('node:module');
-
-const HARNESS_DIR = ${JSON.stringify(harnessProjectDir)};
-const PROJECT_ROOT = ${JSON.stringify(projectRoot)};
-
-// A stable dummy path inside the harness project. Its containing directory
-// is used as the anchor for both Node's createRequire walk-up (below) and
-// Metro's resolveRequest hierarchical lookup (further down). Keep it
-// constant so Metro's per-directory resolution cache stays warm.
-const HARNESS_ANCHOR = path.join(HARNESS_DIR, '_vitest-mobile-anchor.js');
-
-const harnessReq = createRequire(HARNESS_ANCHOR);
-// Hardcoded: @react-native/metro-config is a guaranteed RN-template devDep
-// installed during harness scaffolding. A missing module here means the
-// scaffold is corrupt; the clean MODULE_NOT_FOUND is the right signal.
-const { getDefaultConfig } = harnessReq('@react-native/metro-config');
-
-const config = getDefaultConfig(PROJECT_ROOT);
-
-// Include the harness project in Metro's watched tree. Metro's resolver
-// uses an in-memory file map built from projectRoot + watchFolders, and
-// \`fileSystemLookup\` only considers files inside that map to "exist" —
-// even though we pin harness-anchored resolutions via \`resolveRequest\`
-// below, the default resolver still needs the harness node_modules to
-// be part of the file map for the physical files to be visible.
-config.watchFolders = [...(config.watchFolders || []), HARNESS_DIR];
-
-const HARNESS_PINNED = new Set(['react', 'react-native', 'react-native-safe-area-context']);
-function isHarnessPinned(name) {
-  if (HARNESS_PINNED.has(name)) return true;
-  for (const pkg of HARNESS_PINNED) {
-    if (name === pkg || name.startsWith(pkg + '/')) return true;
-  }
-  return name.startsWith('@react-native/');
-}
-
-const prevResolveRequest = config.resolver && config.resolver.resolveRequest;
-const HARNESS_DIR_PREFIX = HARNESS_DIR + path.sep;
-
-config.resolver = Object.assign({}, config.resolver, {
-  resolveRequest(ctx, moduleName, platform) {
-    if (isHarnessPinned(moduleName)) {
-      // Only rewrite originModulePath when the request comes from OUTSIDE
-      // the harness tree. This pins user-code imports of harness-pinned
-      // modules, but preserves Node's nested node_modules resolution for
-      // imports that already originate within the harness tree (e.g.
-      // react-native's own Libraries/Lists/FlatList.js importing
-      // @react-native/virtualized-lists, which may be installed at
-      // react-native/node_modules/@react-native/virtualized-lists due to
-      // version conflicts).
-      const originInHarness =
-        typeof ctx.originModulePath === 'string' && ctx.originModulePath.startsWith(HARNESS_DIR_PREFIX);
-
-      if (originInHarness) {
-        // Request is already inside the harness tree; let the default
-        // resolver do its normal nested-node_modules walk from that origin.
-        return ctx.resolveRequest(ctx, moduleName, platform);
-      }
-      // Request is from outside the harness (user code); rewrite the
-      // origin so Metro's default resolver starts from inside the harness.
-      return ctx.resolveRequest(
-        Object.assign({}, ctx, { originModulePath: HARNESS_ANCHOR }),
-        moduleName,
-        platform,
-      );
-    }
-    if (prevResolveRequest) {
-      return prevResolveRequest(ctx, moduleName, platform);
-    }
-    return ctx.resolveRequest(ctx, moduleName, platform);
-  },
-});
-
-module.exports = config;
-`;
+  return renderNodeTemplate('metro.config.cjs', {
+    HARNESS_DIR: opts.harnessProjectDir,
+    PROJECT_ROOT: opts.projectRoot,
+  });
 }
 
 // ── Dev Middleware ─────────────────────────────────────────────────
 
 function loadDevMiddleware(
   projectRoot: string,
+  harnessProjectDir: string,
   port: number,
 ): {
   middleware: HandleFunction | null;
   websocketEndpoints: RunServerOptions['websocketEndpoints'] | undefined;
 } {
   try {
-    const cjsRequire = createRequire(resolve(projectRoot, '_resolver.js'));
-    const { createDevMiddleware } = cjsRequire('@react-native/dev-middleware');
+    // Anchor at the harness project so dev-middleware comes from the same
+    // RN version the harness binary was built against. Resolving from the
+    // user's projectRoot could pick up a mismatched version in monorepos
+    // where the user tree has different RN hoisting than the harness.
+    const req = harnessRequire(harnessProjectDir);
+    const { createDevMiddleware } = req('@react-native/dev-middleware') as {
+      createDevMiddleware: (opts: unknown) => {
+        middleware: HandleFunction;
+        websocketEndpoints: RunServerOptions['websocketEndpoints'];
+      };
+    };
     const result = createDevMiddleware({
       projectRoot,
       serverBaseUrl: `http://127.0.0.1:${port}`,
@@ -576,17 +631,11 @@ function generateEntryPoint(opts: {
   wsPort: number;
   metroPort: number;
 }): void {
-  const content = `// Auto-generated by vitest-mobile — do not edit
-if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
-if (typeof globalThis.self === 'undefined') globalThis.self = globalThis;
-globalThis.__VITEST_METRO_PORT__ = ${opts.metroPort};
-
-import { AppRegistry } from 'react-native';
-import { createTestHarness } from 'vitest-mobile/runtime';
-
-const HarnessApp = createTestHarness({ port: ${opts.wsPort}, metroPort: ${opts.metroPort} });
-AppRegistry.registerComponent('${opts.appModuleName}', () => HarnessApp);
-`;
+  const content = renderNodeTemplate('index.entry.js', {
+    APP_MODULE_NAME: opts.appModuleName,
+    WS_PORT: String(opts.wsPort),
+    METRO_PORT: String(opts.metroPort),
+  });
 
   let existing = '';
   try {
@@ -620,36 +669,16 @@ function generateTransformerShim(opts: {
   outputDir: string;
   harnessProjectDir: string;
   testWrapperPluginPath: string;
+  vitestCompatPluginPath: string;
+  inlineAppRootPluginPath: string;
 }): string {
-  const { outputDir, harnessProjectDir, testWrapperPluginPath } = opts;
-  const transformerPath = resolve(outputDir, 'transformer.cjs');
-  const content = `// Auto-generated by vitest-mobile — do not edit.
-const path = require('node:path');
-const { createRequire } = require('node:module');
-
-const HARNESS_DIR = ${JSON.stringify(harnessProjectDir)};
-const TEST_WRAPPER_PLUGIN_PATH = ${JSON.stringify(testWrapperPluginPath)};
-
-// Resolve @react-native/metro-babel-transformer from inside the harness tree.
-// Hardcoded: the harness scaffold always installs this as a transitive dep
-// of @react-native/metro-config. A missing module here means a broken scaffold.
-const harnessReq = createRequire(path.join(HARNESS_DIR, '_vitest-mobile-anchor.js'));
-const upstream = harnessReq('@react-native/metro-babel-transformer');
-
-// Test-wrapper plugin is bundled into vitest-mobile's dist; require by
-// absolute path (it has no external deps that need harness resolution).
-const testWrapperMod = require(TEST_WRAPPER_PLUGIN_PATH);
-const testWrapperPlugin = testWrapperMod && testWrapperMod.default ? testWrapperMod.default : testWrapperMod;
-
-exports.getCacheKey = upstream.getCacheKey;
-exports.transform = function (props) {
-  return upstream.transform(
-    Object.assign({}, props, {
-      plugins: [...(props.plugins || []), testWrapperPlugin],
-    }),
-  );
-};
-`;
+  const transformerPath = resolve(opts.outputDir, 'transformer.cjs');
+  const content = renderNodeTemplate('transformer.cjs', {
+    HARNESS_DIR: opts.harnessProjectDir,
+    TEST_WRAPPER_PLUGIN_PATH: opts.testWrapperPluginPath,
+    VITEST_COMPAT_PLUGIN_PATH: opts.vitestCompatPluginPath,
+    INLINE_APP_ROOT_PLUGIN_PATH: opts.inlineAppRootPluginPath,
+  });
   writeFileSync(transformerPath, content);
   return transformerPath;
 }
@@ -663,22 +692,23 @@ function applyTestTransforms(
   options: {
     projectRoot: string;
     port: number;
-    registryPath: string;
     outputDir: string;
     harnessProjectDir: string;
   },
 ): ConfigT {
-  const { projectRoot, registryPath, outputDir, harnessProjectDir } = options;
+  const { projectRoot, outputDir, harnessProjectDir } = options;
+  const pkgRequire = selfRequire();
+  const testContextPath: string = pkgRequire.resolve('vitest-mobile/test-context');
 
-  // Module resolution: redirect vitest → shim, test-registry → generated file
+  // Module resolution: redirect vitest → shim, test-context → dist runtime
   const originalResolver = config.resolver.resolveRequest;
   const resolveRequest: CustomResolver = (
     context: CustomResolutionContext,
     moduleName: string,
     platform: string | null,
   ) => {
-    if (moduleName === 'vitest-mobile/test-registry') {
-      return { type: 'sourceFile', filePath: registryPath };
+    if (moduleName === 'vitest-mobile/test-context') {
+      return { type: 'sourceFile', filePath: testContextPath };
     }
     if (moduleName === 'vitest') {
       return context.resolveRequest(context, 'vitest-mobile/vitest-shim', platform);
@@ -701,15 +731,6 @@ function applyTestTransforms(
     // Match /index. in both path-only and full URL forms
     const rewritten = url.replace(/\/index\./, `/${outputPathFromRoot}/index.`);
     return origRewrite ? origRewrite(rewritten) : rewritten;
-  };
-
-  // Suppress Metro's ASCII logo on startup
-  const origReporter = config.reporter;
-  const reporter: Reporter = {
-    update(event: Parameters<Reporter['update']>[0]) {
-      if (event?.type === 'initialize_started') return;
-      origReporter?.update?.(event);
-    },
   };
 
   // Serve /status for RCTBundleURLProvider's packager-running check
@@ -741,14 +762,25 @@ function applyTestTransforms(
   // rationale (summary: we can't ship a static transformer.cjs that requires
   // `@react-native/metro-babel-transformer` from vitest-mobile's location
   // because monorepo hoisting makes that resolution unreliable).
-  const testWrapperPluginPath = createRequire(import.meta.url).resolve('../../dist/babel/test-wrapper-plugin.cjs');
-  const transformerPath = generateTransformerShim({ outputDir, harnessProjectDir, testWrapperPluginPath });
+  //
+  // Go through our own package's exports map so we don't hard-code a
+  // dist-layout-dependent relative path; changing the tsup output shape
+  // then only requires updating package.json's `exports`.
+  const testWrapperPluginPath = pkgRequire.resolve('vitest-mobile/babel-plugin');
+  const vitestCompatPluginPath = pkgRequire.resolve('vitest-mobile/vitest-compat-plugin');
+  const inlineAppRootPluginPath = pkgRequire.resolve('vitest-mobile/inline-app-root-plugin');
+  const transformerPath = generateTransformerShim({
+    outputDir,
+    harnessProjectDir,
+    testWrapperPluginPath,
+    vitestCompatPluginPath,
+    inlineAppRootPluginPath,
+  });
 
   return {
     ...config,
     projectRoot,
     watchFolders,
-    reporter,
     resolver: {
       ...config.resolver,
       unstable_enablePackageExports: true,
@@ -765,6 +797,8 @@ function applyTestTransforms(
     transformer: {
       ...config.transformer,
       babelTransformerPath: transformerPath,
+      // enable require.context() in the app bundle (test-context registry)
+      unstable_allowRequireContext: true,
     },
     server: {
       ...config.server,

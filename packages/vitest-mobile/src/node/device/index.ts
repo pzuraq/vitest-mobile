@@ -2,8 +2,11 @@
  * Device management — platform-abstracted interface with iOS/Android drivers.
  */
 
-import type { DeviceOptions, Platform } from '../types';
+import { execSync } from 'node:child_process';
+import type { DeviceOptions, Platform, RuntimeState } from '../types';
 import { withDeviceLock } from './shared';
+import { getAdbPath } from '../exec-utils';
+import { log } from '../logger';
 import {
   iosDriver,
   saveDeviceSnapshot as iosSaveDeviceSnapshot,
@@ -24,40 +27,79 @@ import {
 // ── DeviceDriver interface ───────────────────────────────────────
 
 export interface DeviceDriver {
-  ensureDevice(opts: DeviceOptions): Promise<string | undefined>;
-  launchApp(bundleId: string, opts?: { metroPort?: number; deviceId?: string }): void | Promise<void>;
-  stopApp(bundleId: string, deviceId?: string): void;
-  getInstalledCacheKey(bundleId: string, deviceId?: string): string | null;
-  isDeviceOnline(): boolean;
-  getBootedDeviceId(): string | null;
+  /**
+   * Resolve a device for this run. Reads the user's device preferences
+   * from `device` (headless, preferredDeviceId, apiLevel) and pool runtime
+   * state from `runtime` (appDir, instanceId, port, metroPort, bundleId).
+   * Returns the selected device id.
+   */
+  ensureDevice(runtime: RuntimeState, device: DeviceOptions): Promise<string | undefined>;
+  /** Launch the harness app on `runtime.deviceId` against `runtime.metroPort`. */
+  launchApp(runtime: RuntimeState): void | Promise<void>;
+  /** Stop the harness app identified by `runtime.bundleId` on `runtime.deviceId`. */
+  stopApp(runtime: RuntimeState): void;
+  /** Read the cache-key baked into the currently-installed app on `runtime.deviceId`. */
+  getInstalledCacheKey(runtime: RuntimeState): string | null;
 }
 
 export function getDriver(platform: Platform): DeviceDriver {
   return platform === 'ios' ? iosDriver : androidDriver;
 }
 
-// ── Backward-compatible public API ───────────────────────────────
-// These re-exports maintain the same function signatures as the old
-// monolithic device.ts so existing callers don't need to change.
+// ── Public API ───────────────────────────────────────────────────
 
-export async function ensureDevice(platform: Platform, opts: DeviceOptions = {}): Promise<string | undefined> {
-  return withDeviceLock(() => getDriver(platform).ensureDevice(opts));
-}
-
-export async function launchApp(
+export async function ensureDevice(
   platform: Platform,
-  bundleId: string,
-  opts: { metroPort?: number; deviceId?: string } = {},
-): Promise<void> {
-  await getDriver(platform).launchApp(bundleId, opts);
+  runtime: RuntimeState,
+  device: DeviceOptions = {},
+): Promise<string | undefined> {
+  return withDeviceLock(() => getDriver(platform).ensureDevice(runtime, device));
 }
 
-export function stopApp(platform: Platform, bundleId: string, deviceId?: string): void {
-  getDriver(platform).stopApp(bundleId, deviceId);
+export async function launchApp(platform: Platform, runtime: RuntimeState): Promise<void> {
+  await getDriver(platform).launchApp(runtime);
 }
 
-export function getInstalledCacheKey(platform: Platform, bundleId: string, deviceId?: string): string | null {
-  return getDriver(platform).getInstalledCacheKey(bundleId, deviceId);
+export function stopApp(platform: Platform, runtime: RuntimeState): void {
+  getDriver(platform).stopApp(runtime);
+}
+
+export function getInstalledCacheKey(platform: Platform, runtime: RuntimeState): string | null {
+  return getDriver(platform).getInstalledCacheKey(runtime);
+}
+
+/**
+ * Install the harness binary onto the selected device. No-ops if the path is
+ * empty (useful for test harnesses with no binary) or if the target device
+ * already has a matching cached build. Errors are logged and swallowed — a
+ * later launch will fail with a clearer message if the install really broke.
+ */
+export function installHarness(
+  platform: Platform,
+  runtime: RuntimeState,
+  harness: { binaryPath: string; cacheKey?: string | null },
+): void {
+  if (!harness.binaryPath) return;
+
+  if (harness.cacheKey) {
+    const installed = getInstalledCacheKey(platform, runtime);
+    if (installed === harness.cacheKey) {
+      log.info('Harness binary already installed — skipping install');
+      return;
+    }
+  }
+
+  try {
+    if (platform === 'ios') {
+      const target = runtime.deviceId ?? 'booted';
+      execSync(`xcrun simctl install ${target} "${harness.binaryPath}"`, { stdio: 'pipe' });
+    } else if (platform === 'android') {
+      const target = runtime.deviceId ? `-s ${runtime.deviceId} ` : '';
+      execSync(`${getAdbPath()} ${target}install -r "${harness.binaryPath}"`, { stdio: 'pipe' });
+    }
+  } catch (e) {
+    log.verbose(`Install may have failed (non-fatal if already installed): ${e}`);
+  }
 }
 
 export async function saveDeviceSnapshot(

@@ -108,9 +108,11 @@ beforeEach(() => {
 // ── launchApp ────────────────────────────────────────────────────────────────
 
 describe('launchApp', () => {
+  const APP_DIR = process.cwd();
+
   it('android: launches via monkey with bundle ID', async () => {
     execReturns('');
-    await launchApp('android', 'com.example.app', { metroPort: 8081 });
+    await launchApp('android', { appDir: APP_DIR, bundleId: 'com.example.app', metroPort: 8081 });
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     const monkey = calls.find(c => c.includes('monkey'));
     expect(monkey).toBeDefined();
@@ -119,7 +121,12 @@ describe('launchApp', () => {
 
   it('android: uses serial when provided', async () => {
     execReturns('');
-    await launchApp('android', 'com.vitest.app', { deviceId: 'emulator-5556' });
+    await launchApp('android', {
+      appDir: APP_DIR,
+      bundleId: 'com.vitest.app',
+      metroPort: 18081,
+      deviceId: 'emulator-5556',
+    });
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     const monkey = calls.find(c => c.includes('monkey'));
     expect(monkey).toContain('-s emulator-5556');
@@ -127,7 +134,7 @@ describe('launchApp', () => {
 
   it('android: force-stops the app before launching', async () => {
     execReturns('');
-    await launchApp('android', 'com.example.app');
+    await launchApp('android', { appDir: APP_DIR, bundleId: 'com.example.app', metroPort: 18081 });
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     const forceStop = calls.find(c => c.includes('force-stop'));
     expect(forceStop).toContain('com.example.app');
@@ -141,7 +148,7 @@ describe('launchApp', () => {
     });
     mockExec.mockImplementation(() => simctlJson);
 
-    launchApp('ios', 'com.example.app', { metroPort: 8081 });
+    launchApp('ios', { appDir: APP_DIR, bundleId: 'com.example.app', metroPort: 8081 });
 
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     const launch = calls.find(c => c.includes('simctl launch'));
@@ -158,7 +165,7 @@ describe('launchApp', () => {
     });
     mockExec.mockImplementation(() => simctlJson);
 
-    launchApp('ios', 'com.example.app', { metroPort: 18081 });
+    launchApp('ios', { appDir: APP_DIR, bundleId: 'com.example.app', metroPort: 18081 });
 
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     expect(calls.some(c => c.includes('RCT_jsLocation') && c.includes('127.0.0.1:18081'))).toBe(true);
@@ -172,7 +179,7 @@ describe('launchApp', () => {
     });
     mockExec.mockImplementation(() => simctlJson);
 
-    launchApp('ios', 'com.example.app');
+    launchApp('ios', { appDir: APP_DIR, bundleId: 'com.example.app', metroPort: 18081 });
 
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     const terminate = calls.find(c => c.includes('simctl terminate'));
@@ -184,9 +191,11 @@ describe('launchApp', () => {
 // ── stopApp ──────────────────────────────────────────────────────────────────
 
 describe('stopApp', () => {
+  const APP_DIR = process.cwd();
+
   it('android: sends adb force-stop', () => {
     execReturns('');
-    stopApp('android', 'com.example.app');
+    stopApp('android', { appDir: APP_DIR, bundleId: 'com.example.app' });
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     expect(calls.some(c => c.includes('force-stop') && c.includes('com.example.app'))).toBe(true);
   });
@@ -195,7 +204,7 @@ describe('stopApp', () => {
     mockExec.mockImplementation(() => {
       throw new Error('adb not found');
     });
-    expect(() => stopApp('android', 'com.example.app')).not.toThrow();
+    expect(() => stopApp('android', { appDir: APP_DIR, bundleId: 'com.example.app' })).not.toThrow();
   });
 
   it('ios: sends xcrun simctl terminate when a simulator is booted', () => {
@@ -205,7 +214,7 @@ describe('stopApp', () => {
       },
     });
     mockExec.mockImplementation(() => simctlJson);
-    stopApp('ios', 'com.example.app');
+    stopApp('ios', { appDir: APP_DIR, bundleId: 'com.example.app' });
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     expect(calls.some(c => c.includes('simctl terminate') && c.includes('com.example.app'))).toBe(true);
   });
@@ -213,7 +222,7 @@ describe('stopApp', () => {
   it('ios: does nothing if no simulator is booted', () => {
     const simctlJson = JSON.stringify({ devices: {} });
     mockExec.mockImplementation(() => simctlJson);
-    expect(() => stopApp('ios', 'com.example.app')).not.toThrow();
+    expect(() => stopApp('ios', { appDir: APP_DIR, bundleId: 'com.example.app' })).not.toThrow();
   });
 });
 
@@ -231,7 +240,7 @@ describe('ensureDevice', () => {
       return '';
     });
 
-    await ensureDevice('android', { wsPort: 7878, metroPort: 8081 });
+    await ensureDevice('android', { appDir: process.cwd(), port: 7878, metroPort: 8081 });
 
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     expect(calls.some(c => c.includes('reverse tcp:7878'))).toBe(true);
@@ -247,7 +256,7 @@ describe('ensureDevice', () => {
       return '';
     });
 
-    await ensureDevice('android', { wsPort: 7878, metroPort: 8081 });
+    await ensureDevice('android', { appDir: process.cwd(), port: 7878, metroPort: 8081 });
 
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     expect(calls.some(c => c.includes('wait-for-device'))).toBe(false);
@@ -264,7 +273,7 @@ describe('ensureDevice', () => {
     });
     mockExec.mockImplementation(() => simctlJson);
 
-    const selected = await ensureDevice('ios');
+    const selected = await ensureDevice('ios', { appDir: process.cwd() });
     expect(selected).toBe('PRIMARY-UDID');
 
     const calls = mockExec.mock.calls.map(c => String(c[0]));
@@ -323,7 +332,7 @@ describe('ensureDevice', () => {
       });
     });
 
-    const selected = await ensureDevice('ios', { headless: true });
+    const selected = await ensureDevice('ios', { appDir: process.cwd() }, { headless: true });
     expect(selected).toBe('NEW-PRIMARY-UDID');
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     expect(calls.some(c => c.includes(`simctl create "${projectPrimarySimName()}"`))).toBe(true);
@@ -389,7 +398,7 @@ describe('ensureDevice', () => {
     // Primary's Metro port is live → primary counts as in-use.
     portsInUse.add(18081);
 
-    const selected = await ensureDevice('ios', { headless: true, instanceId: 'abcdef' });
+    const selected = await ensureDevice('ios', { appDir: process.cwd(), instanceId: 'abcdef' }, { headless: true });
     expect(selected).toBe('SECONDARY-UDID');
     const calls = mockExec.mock.calls.map(c => String(c[0]));
     expect(calls.some(c => c.includes(`simctl create "${name}-abcdef"`))).toBe(true);
