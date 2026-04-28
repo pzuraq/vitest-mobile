@@ -1,8 +1,8 @@
 ---
-'vitest-mobile': major
+'vitest-mobile': minor
 ---
 
-Restructure plugin options and rewrite the device-side runtime.
+Restructure plugin options and rewrite tye device-side runtime.
 
 ### Breaking: plugin options
 
