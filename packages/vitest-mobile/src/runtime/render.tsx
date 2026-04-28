@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { getGlobalSetTestContent, getGlobalContainerRef, nextRenderKey } from './context';
+import { getGlobalContainerRef, nextRenderKey, setTestContentValue } from './context';
 import { createLocatorAPI, type LocatorAPI } from './locator';
 import { getViewTree, getViewTreeString, Harness } from './tree';
 import type { ViewTreeNode } from './native-harness';
@@ -26,15 +26,15 @@ function yield_(): Promise<void> {
 }
 
 export async function render(element: React.ReactElement, options: RenderOptions = {}): Promise<Screen> {
-  const setTestContent = getGlobalSetTestContent();
-  const containerRef = getGlobalContainerRef();
+  // Throws if the container provider hasn't mounted yet (matches old behavior).
+  getGlobalContainerRef();
 
   const wrapper = options.wrapper ?? defaultWrapper;
   const content = wrapper ? React.createElement(wrapper, null, element) : element;
 
   // Increment key to force React to destroy previous tree and create fresh state
   nextRenderKey();
-  setTestContent(content);
+  setTestContentValue(content);
 
   // Wait for React to process the state update and Fabric to commit the views.
   // Fabric's commit pipeline is multi-stage: React reconcile → shadow tree mount
@@ -51,7 +51,7 @@ export async function render(element: React.ReactElement, options: RenderOptions
   return {
     ...locators,
     unmount() {
-      setTestContent(null);
+      setTestContentValue(null);
     },
     dumpTree() {
       return getViewTreeString();
@@ -64,8 +64,7 @@ export async function render(element: React.ReactElement, options: RenderOptions
 
 export async function cleanup(): Promise<void> {
   try {
-    const setTestContent = getGlobalSetTestContent();
-    setTestContent(null);
+    setTestContentValue(null);
     // Yield to let React schedule the unmount commit, then flush
     // multiple times to ensure Fabric has fully removed old native views.
     // Without this, findByTestId can match stale views from the

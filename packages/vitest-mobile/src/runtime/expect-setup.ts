@@ -130,7 +130,7 @@ export function setupExpect() {
     // expect.element(locator) — retrying assertion API matching Vitest Browser Mode.
     // Returns an object with matcher methods that poll until the assertion passes.
     expect.element = (locator: Locator, options?: { timeout?: number; interval?: number }) => {
-      return createElementAssertion(locator, false, options);
+      return new ElementAssertion(locator, false, options);
     };
 
     // Make expect available via import and globally
@@ -147,69 +147,146 @@ export function setupExpect() {
 const DEFAULT_POLL_TIMEOUT = 3000;
 const DEFAULT_POLL_INTERVAL = 50;
 
-interface ElementAssertion {
-  toHaveText(expected: string): Promise<void>;
-  toContainText(expected: string): Promise<void>;
-  toBeVisible(): Promise<void>;
-  not: ElementAssertion;
+/**
+ * Stack lines for async matcher helpers (expect-setup, retry) in this package
+ * that sit between the test and the poll callback — we skip these so
+ * the synchronous capture maps to the test (or immediate caller) instead.
+ */
+function isInternalMatcherFrameLine(line: string): boolean {
+  if (line.includes('captureAssertionCallSite')) return true;
+  if (!line.includes('vitest-mobile') || !/[/\\]runtime[/\\]/.test(line)) return false;
+  return /expect-setup\.\w+/.test(line) || /[/\\]retry\.\w+/.test(line);
 }
 
-function createElementAssertion(
-  locator: Locator,
-  negated: boolean,
-  options?: { timeout?: number; interval?: number },
-): ElementAssertion {
-  const timeout = options?.timeout ?? DEFAULT_POLL_TIMEOUT;
-  const interval = options?.interval ?? DEFAULT_POLL_INTERVAL;
+/** Call synchronously at matcher entry; stack lines to prepend to thrown errors. */
+function captureAssertionCallSite(): string {
+  const err = new Error();
+  const Er = Error as unknown as { captureStackTrace?: (e: Error, fn: () => void) => void };
+  if (typeof Er.captureStackTrace === 'function') {
+    Er.captureStackTrace(err, captureAssertionCallSite);
+  }
+  const lines = (err.stack ?? '').split('\n');
+  const out: string[] = [];
+  for (const line of lines.slice(1)) {
+    if (isInternalMatcherFrameLine(line)) continue;
+    out.push(line);
+  }
+  return out.slice(0, 12).join('\n');
+}
 
-  return {
-    async toHaveText(expected: string) {
+const hasCaptureStackTrace =
+  typeof (Error as unknown as { captureStackTrace?: (e: Error, fn: Function) => void }).captureStackTrace ===
+  'function';
+
+/**
+ * One Error per matcher call, created at the test callsite. The poll layer only
+ * updates the message and rethrows — we do not keep async/retry stack frames.
+ */
+function createAtCallSiteError(boundary: Function): { err: Error; syncSite: string } {
+  const syncSite = captureAssertionCallSite();
+  const err = new Error();
+  if (hasCaptureStackTrace) {
+    const Er = Error as unknown as { captureStackTrace: (e: Error, fn: Function) => void };
+    Er.captureStackTrace(err, boundary);
+  } else {
+    err.stack = `${err.name}: ${err.message || ''}\n${syncSite}`;
+  }
+  return { err, syncSite };
+}
+
+function setAtCallSiteErrorMessage(err: Error, syncSite: string, message: string): void {
+  err.message = message;
+  if (!hasCaptureStackTrace) {
+    err.stack = `${err.name}: ${message}\n${syncSite}`;
+  }
+}
+
+class ElementAssertion {
+  private readonly _timeout: number;
+  private readonly _interval: number;
+
+  constructor(
+    private readonly locator: Locator,
+    private readonly negated: boolean,
+    private readonly options?: { timeout?: number; interval?: number },
+  ) {
+    this._timeout = options?.timeout ?? DEFAULT_POLL_TIMEOUT;
+    this._interval = options?.interval ?? DEFAULT_POLL_INTERVAL;
+  }
+
+  toHaveText(expected: string): Promise<void> {
+    const { locator, negated } = this;
+    const timeout = this._timeout;
+    const interval = this._interval;
+    async function toHaveTextForElement(exp: string) {
+      const { err, syncSite } = createAtCallSiteError(toHaveTextForElement);
       await poll(
         async () => {
           const actual = locator.text;
-          if (!negated && actual !== expected) {
-            throw new Error(`Expected element to have text "${expected}" but got "${actual}"`);
+          if (!negated && actual !== exp) {
+            setAtCallSiteErrorMessage(err, syncSite, `Expected element to have text "${exp}" but got "${actual}"`);
+            throw err;
           }
-          if (negated && actual === expected) {
-            throw new Error(`Expected element NOT to have text "${expected}"`);
+          if (negated && actual === exp) {
+            setAtCallSiteErrorMessage(err, syncSite, `Expected element NOT to have text "${exp}"`);
+            throw err;
           }
         },
         { timeout, interval },
       );
-    },
+    }
+    return toHaveTextForElement(expected);
+  }
 
-    async toContainText(expected: string) {
+  toContainText(expected: string): Promise<void> {
+    const { locator, negated } = this;
+    const timeout = this._timeout;
+    const interval = this._interval;
+    async function toContainTextForElement(exp: string) {
+      const { err, syncSite } = createAtCallSiteError(toContainTextForElement);
       await poll(
         async () => {
           const actual = locator.text;
-          if (!negated && !actual.includes(expected)) {
-            throw new Error(`Expected element to contain text "${expected}" but got "${actual}"`);
+          if (!negated && !actual.includes(exp)) {
+            setAtCallSiteErrorMessage(err, syncSite, `Expected element to contain text "${exp}" but got "${actual}"`);
+            throw err;
           }
-          if (negated && actual.includes(expected)) {
-            throw new Error(`Expected element NOT to contain text "${expected}"`);
+          if (negated && actual.includes(exp)) {
+            setAtCallSiteErrorMessage(err, syncSite, `Expected element NOT to contain text "${exp}"`);
+            throw err;
           }
         },
         { timeout, interval },
       );
-    },
+    }
+    return toContainTextForElement(expected);
+  }
 
-    async toBeVisible() {
+  toBeVisible(): Promise<void> {
+    const { locator, negated } = this;
+    const timeout = this._timeout;
+    const interval = this._interval;
+    async function toBeVisibleForElement() {
+      const { err, syncSite } = createAtCallSiteError(toBeVisibleForElement);
       await poll(
         async () => {
           const visible = locator.exists;
           if (!negated && !visible) {
-            throw new Error('Expected element to be visible but it does not exist');
+            setAtCallSiteErrorMessage(err, syncSite, 'Expected element to be visible but it does not exist');
+            throw err;
           }
           if (negated && visible) {
-            throw new Error('Expected element NOT to be visible');
+            setAtCallSiteErrorMessage(err, syncSite, 'Expected element NOT to be visible');
+            throw err;
           }
         },
         { timeout, interval },
       );
-    },
+    }
+    return toBeVisibleForElement();
+  }
 
-    get not() {
-      return createElementAssertion(locator, !negated, options);
-    },
-  };
+  get not(): ElementAssertion {
+    return new ElementAssertion(this.locator, !this.negated, this.options);
+  }
 }

@@ -2,27 +2,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createServer } from 'node:net';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { WebSocket } from 'ws';
-import { parse as flatParse } from 'flatted';
+import { parse as flatParse, stringify as flatStringify } from 'flatted';
 
 vi.mock('../../src/node/environment', () => ({
-  checkEnvironment: vi.fn(() => ({ ok: true, checks: [], issues: [] })),
+  checkAndReportEnvironment: vi.fn(() => undefined),
 }));
 
 vi.mock('../../src/node/device', () => ({
   ensureDevice: vi.fn(async () => {}),
   launchApp: vi.fn(),
   stopApp: vi.fn(),
+  installHarness: vi.fn(),
 }));
 
 vi.mock('../../src/node/harness-builder', () => ({
-  detectReactNativeVersion: vi.fn(() => '0.76.0'),
-  findHarnessBinary: vi.fn(() => ({
+  resolveHarness: vi.fn(() => ({
     binaryPath: '',
-    bundleId: 'com.vitest.mobile.harness',
-    cached: true,
     cacheKey: 'test-key',
+    bundleId: 'com.vitest.mobile.harness',
+    projectDir: '/tmp/harness',
   })),
 }));
 
@@ -32,17 +32,16 @@ vi.mock('../../src/node/metro-runner', () => ({
   })),
 }));
 
-vi.mock('../../src/metro/generateTestRegistry', () => ({
-  generateTestRegistry: vi.fn(() => ({ testFiles: [] })),
-}));
-
 vi.mock('../../src/node/instance-manager', () => ({
-  resolveInstanceResources: vi.fn(async (opts: { wsPort: number; metroPort: number; appDir: string }) => ({
-    instanceId: `test-${Date.now().toString(36)}`,
-    wsPort: opts.wsPort,
-    metroPort: opts.metroPort,
-    outputDir: opts.appDir,
-  })),
+  resolveInstanceResources: vi.fn(
+    async (options: { platform: string; port?: number; metroPort?: number }, internal: { appDir: string }) => ({
+      instanceId: `test-${Date.now().toString(36)}`,
+      port: options.port ?? 0,
+      metroPort: options.metroPort ?? 0,
+      instanceDir: resolve(internal.appDir, '.vitest-mobile', 'instances', 'test'),
+      activeInstances: [],
+    }),
+  ),
   registerInstanceRecord: vi.fn(),
   releaseInstanceRecord: vi.fn(),
   updateInstanceRecord: vi.fn(),
@@ -50,39 +49,46 @@ vi.mock('../../src/node/instance-manager', () => ({
 
 import { createNativePoolWorker } from '../../src/node/pool';
 import { closeServer } from '../../src/node/connections';
-import { checkEnvironment } from '../../src/node/environment';
+import { checkAndReportEnvironment } from '../../src/node/environment';
 import { ensureDevice } from '../../src/node/device';
-import type { NativePoolOptions } from '../../src/node/types';
+import type { InternalPoolOptions, NativePluginOptions } from '../../src/node/types';
 
 async function reservePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolvePromise, reject) => {
     const s = createServer();
     s.listen(0, '127.0.0.1', () => {
       const addr = s.address();
       const port = typeof addr === 'object' && addr ? addr.port : 0;
-      s.close(err => (err ? reject(err) : resolve(port)));
+      s.close(err => (err ? reject(err) : resolvePromise(port)));
     });
     s.on('error', reject);
   });
 }
 
-function poolOptions(port: number, metroPort: number, appDir: string): NativePoolOptions {
-  return {
+function buildPoolInputs(
+  port: number,
+  metroPort: number,
+  appDir: string,
+): { options: NativePluginOptions; internal: InternalPoolOptions } {
+  const options: NativePluginOptions = {
     port,
     metroPort,
     platform: 'android',
-    bundleId: 'com.vitest.mobile.harness',
-    appDir,
-    skipIfUnavailable: false,
-    headless: true,
     verbose: false,
-    mode: 'run',
-    testInclude: ['**/*.test.ts'],
+    device: { headless: true },
+    harness: { bundleIdOverride: 'com.vitest.mobile.harness' },
   };
+  const internal: InternalPoolOptions = {
+    appDir,
+    mode: 'run',
+    testPatterns: ['**/*.test.ts'],
+    outputDir: resolve(appDir, '.vitest-mobile'),
+  };
+  return { options, internal };
 }
 
 function connectWs(port: number, platform = 'android'): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolvePromise, reject) => {
     const deadline = Date.now() + 25_000;
     const attempt = (): void => {
       if (Date.now() > deadline) {
@@ -91,8 +97,8 @@ function connectWs(port: number, platform = 'android'): Promise<WebSocket> {
       }
       const ws = new WebSocket(`ws://127.0.0.1:${port}`);
       ws.once('open', () => {
-        ws.send(JSON.stringify({ __hello: true, platform }));
-        resolve(ws);
+        ws.send(flatStringify({ __hello: true, platform }));
+        resolvePromise(ws);
       });
       ws.once('error', () => setTimeout(attempt, 30));
     };
@@ -117,7 +123,7 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
         } as Response),
       ),
     );
-    vi.mocked(checkEnvironment).mockClear();
+    vi.mocked(checkAndReportEnvironment).mockClear();
     vi.mocked(ensureDevice).mockClear();
   });
 
@@ -145,7 +151,8 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
   it('returns a worker with name, on, off, send, start, stop', async () => {
     const port = await reservePort();
     metroPort = await reservePort();
-    worker = createNativePoolWorker(poolOptions(port, metroPort, appDir));
+    const { options, internal } = buildPoolInputs(port, metroPort, appDir);
+    worker = createNativePoolWorker(options, internal);
 
     expect(worker.name).toBe('native');
     expect(typeof worker.on).toBe('function');
@@ -158,30 +165,32 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
   it('start() runs environment check and device setup when Metro is already “up” (fetch mock)', async () => {
     const port = await reservePort();
     metroPort = await reservePort();
-    worker = createNativePoolWorker(poolOptions(port, metroPort, appDir));
+    const { options, internal } = buildPoolInputs(port, metroPort, appDir);
+    worker = createNativePoolWorker(options, internal);
 
     worker.start();
     const ws = await connectWs(port);
     clients.push(ws);
     await new Promise(r => setTimeout(r, 200));
 
-    expect(vi.mocked(checkEnvironment)).toHaveBeenCalled();
+    expect(vi.mocked(checkAndReportEnvironment)).toHaveBeenCalled();
     expect(vi.mocked(ensureDevice)).toHaveBeenCalled();
   });
 
   it('send() forwards non-birpc payloads to the connected WebSocket client', async () => {
     const port = await reservePort();
     metroPort = await reservePort();
-    worker = createNativePoolWorker(poolOptions(port, metroPort, appDir));
+    const { options, internal } = buildPoolInputs(port, metroPort, appDir);
+    worker = createNativePoolWorker(options, internal);
 
     worker.start();
     const ws = await connectWs(port);
     clients.push(ws);
     await new Promise(r => setTimeout(r, 200));
 
-    const received = new Promise<unknown>(resolve => {
+    const received = new Promise<unknown>(resolvePromise => {
       ws.once('message', data => {
-        resolve(flatParse(data.toString()));
+        resolvePromise(flatParse(data.toString()));
       });
     });
 
@@ -193,7 +202,8 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
   it('forwards a batched run request with all files in a single WebSocket frame', async () => {
     const port = await reservePort();
     metroPort = await reservePort();
-    worker = createNativePoolWorker(poolOptions(port, metroPort, appDir));
+    const { options, internal } = buildPoolInputs(port, metroPort, appDir);
+    worker = createNativePoolWorker(options, internal);
 
     worker.start();
     const ws = await connectWs(port);
@@ -216,13 +226,13 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
     };
 
     const seenFrames: string[] = [];
-    const runReceived = new Promise<{ type: string; context: { files: { filepath: string }[] } }>(resolve => {
+    const runReceived = new Promise<{ type: string; context: { files: { filepath: string }[] } }>(resolvePromise => {
       ws.on('message', data => {
         const raw = data.toString();
         seenFrames.push(raw);
         const parsed = parseAny(raw) as { type?: string; context?: { files?: { filepath: string }[] } } | null;
         if (parsed?.type === 'run') {
-          resolve(parsed as { type: string; context: { files: { filepath: string }[] } });
+          resolvePromise(parsed as { type: string; context: { files: { filepath: string }[] } });
         }
       });
     });
@@ -256,7 +266,8 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
   it('on/off correctly adds and removes listeners', async () => {
     const port = await reservePort();
     metroPort = await reservePort();
-    worker = createNativePoolWorker(poolOptions(port, metroPort, appDir));
+    const { options, internal } = buildPoolInputs(port, metroPort, appDir);
+    worker = createNativePoolWorker(options, internal);
 
     worker.start();
     const ws = await connectWs(port);
@@ -267,13 +278,13 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
     const listener = (data: unknown) => received.push(data);
     worker.on('message', listener);
 
-    ws.send(JSON.stringify({ ping: 1 }));
+    ws.send(flatStringify({ ping: 1 }));
     await new Promise(r => setTimeout(r, 100));
     const countAfterOn = received.length;
     expect(countAfterOn).toBeGreaterThan(0);
 
     worker.off('message', listener);
-    ws.send(JSON.stringify({ ping: 2 }));
+    ws.send(flatStringify({ ping: 2 }));
     await new Promise(r => setTimeout(r, 100));
     expect(received.length).toBe(countAfterOn);
   });
@@ -281,17 +292,18 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
   it('handshake: a {type:stop} request synchronously emits a stopped response', async () => {
     const port = await reservePort();
     metroPort = await reservePort();
-    worker = createNativePoolWorker(poolOptions(port, metroPort, appDir));
+    const { options, internal } = buildPoolInputs(port, metroPort, appDir);
+    worker = createNativePoolWorker(options, internal);
 
     worker.start();
     const ws = await connectWs(port);
     clients.push(ws);
     await new Promise(r => setTimeout(r, 200));
 
-    const stopped = new Promise<unknown>(resolve => {
+    const stopped = new Promise<unknown>(resolvePromise => {
       worker!.on('message', data => {
         const m = data as { type?: string; __vitest_worker_response__?: boolean };
-        if (m?.__vitest_worker_response__ && m.type === 'stopped') resolve(data);
+        if (m?.__vitest_worker_response__ && m.type === 'stopped') resolvePromise(data);
       });
     });
 
@@ -302,34 +314,5 @@ describe('createNativePoolWorker lifecycle (mocked device / Metro / binary)', ()
 
     const msg = await stopped;
     expect(msg).toEqual(expect.objectContaining({ __vitest_worker_response__: true, type: 'stopped' }));
-  });
-
-  it('teardown: worker.stop() in run mode notifies the device with __native_run_end', async () => {
-    const port = await reservePort();
-    metroPort = await reservePort();
-    worker = createNativePoolWorker(poolOptions(port, metroPort, appDir));
-
-    worker.start();
-    const ws = await connectWs(port);
-    clients.push(ws);
-    await new Promise(r => setTimeout(r, 200));
-
-    const endSeen = new Promise<Record<string, unknown>>(resolve => {
-      ws.on('message', data => {
-        const raw = data.toString();
-        // __native_run_end is plain JSON, not flatted birpc.
-        try {
-          const parsed = JSON.parse(raw) as Record<string, unknown>;
-          if (parsed?.__native_run_end === true) resolve(parsed);
-        } catch {
-          /* not JSON (could be flatted) — ignore */
-        }
-      });
-    });
-
-    await worker.stop();
-    const msg = await endSeen;
-    expect(msg).toMatchObject({ __native_run_end: true });
-    worker = null;
   });
 });

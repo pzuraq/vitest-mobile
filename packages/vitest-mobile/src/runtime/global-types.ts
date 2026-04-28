@@ -6,27 +6,41 @@
  * This module provides a typed view over those extensions.
  */
 
-export interface MetroModule {
-  isInitialized: boolean;
-  importedAll: unknown;
-  importedDefault: unknown;
-  verboseName?: string;
-  path?: string;
-}
-
 export interface VitestGlobalThis {
   Event?: typeof Event;
   EventTarget?: typeof EventTarget;
-  DOMException?: typeof DOMException;
   expect?: unknown;
   setImmediate?: (fn: () => void) => unknown;
-  window?: typeof globalThis;
-  self?: typeof globalThis;
-  __VITEST_METRO_PORT__?: number;
-  __r?: { getModules?: () => Map<number, MetroModule> };
-  __TEST_FILES__?: Record<string, () => unknown>;
-  __TEST_HMR_LISTENERS__?: Set<(f?: string) => void>;
   [key: symbol]: unknown;
+}
+
+/**
+ * Runtime value returned from `require.context()`. Same shape as webpack /
+ * expo-router; Metro's polyfill generates a callable with `keys()`,
+ * `resolve()`, and a stable `id` at bundle time.
+ */
+export interface RequireContext {
+  keys(): string[];
+  (id: string): unknown;
+  <T>(id: string): T;
+  resolve(id: string): string;
+  id: string;
+}
+
+declare global {
+  // `require` resolves through @types/node as `NodeRequire extends NodeJS.Require`.
+  // Augmenting the inner interface places `.context` on the actual call target.
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace NodeJS {
+    interface Require {
+      context(
+        directory: string,
+        useSubdirectories?: boolean,
+        regExp?: RegExp,
+        mode?: 'sync' | 'eager' | 'lazy' | 'lazy-once',
+      ): RequireContext;
+    }
+  }
 }
 
 /** Typed accessor for globalThis in the Hermes runtime. */

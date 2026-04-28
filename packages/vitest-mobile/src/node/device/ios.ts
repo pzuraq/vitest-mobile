@@ -10,7 +10,7 @@ import { homedir } from 'node:os';
 import { log } from '../logger';
 import { run } from '../exec-utils';
 import { getCacheDir } from '../paths';
-import type { DeviceOptions } from '../types';
+import type { DeviceOptions, RuntimeState } from '../types';
 import type { DeviceDriver } from './index';
 import { DEFAULT_BUNDLE_ID, isPortListening, errorMessage } from './shared';
 import { getDeviceMapping, setDeviceMapping } from './mapping';
@@ -687,8 +687,8 @@ function deleteSimulatorsByIds(ids: string[]): string[] {
 // ── DeviceDriver implementation ──────────────────────────────────
 
 export const iosDriver: DeviceDriver = {
-  async ensureDevice(opts: DeviceOptions): Promise<string | undefined> {
-    const appDir = opts.appDir ?? process.cwd();
+  async ensureDevice(runtime: RuntimeState, device: DeviceOptions): Promise<string | undefined> {
+    const appDir = runtime.appDir;
     let mapping = getDeviceMapping(appDir, 'ios');
     if (!mapping) {
       // Migration: if a pre-mapping VitestMobile-<hash> sim already exists for
@@ -705,32 +705,28 @@ export const iosDriver: DeviceDriver = {
       throw new Error(`No iOS device configured for this project. Run 'vitest-mobile bootstrap --platform ios' first.`);
     }
     return bootIOSSimulator({
-      deviceId: opts.deviceId,
-      bundleId: opts.bundleId,
-      headless: opts.headless,
-      instanceId: opts.instanceId,
+      deviceId: device.preferredDeviceId ?? runtime.deviceId,
+      bundleId: runtime.bundleId,
+      headless: device.headless,
+      instanceId: runtime.instanceId ?? undefined,
       targetName: mapping.deviceName,
       createIfMissing: mapping.createdByUs,
     });
   },
 
-  launchApp(bundleId: string, opts: { metroPort?: number; deviceId?: string } = {}): void {
-    launchIOSApp(bundleId, opts.metroPort ?? 18081, opts.deviceId);
+  // launchApp/stopApp/getInstalledCacheKey: bundleId + metroPort are always
+  // concrete when the pool calls these — withDefaults seeds bundleId and
+  // resolveInstance populates metroPort before launch. CLI paths don't
+  // reach these methods.
+  launchApp(runtime: RuntimeState): void {
+    launchIOSApp(runtime.bundleId!, runtime.metroPort!, runtime.deviceId);
   },
 
-  stopApp(bundleId: string, deviceId?: string): void {
-    stopIOSApp(bundleId, deviceId);
+  stopApp(runtime: RuntimeState): void {
+    stopIOSApp(runtime.bundleId!, runtime.deviceId);
   },
 
-  getInstalledCacheKey(bundleId: string, deviceId?: string): string | null {
-    return getIOSInstalledCacheKey(bundleId, deviceId);
-  },
-
-  isDeviceOnline(): boolean {
-    return getBootedSimulator() !== null;
-  },
-
-  getBootedDeviceId(): string | null {
-    return getBootedSimulator();
+  getInstalledCacheKey(runtime: RuntimeState): string | null {
+    return getIOSInstalledCacheKey(runtime.bundleId!, runtime.deviceId);
   },
 };

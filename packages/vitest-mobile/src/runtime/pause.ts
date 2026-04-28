@@ -9,7 +9,7 @@
  * Test file edits trigger a rerun (abort → fresh start → pause again).
  */
 
-import { setStatus } from './state';
+import { isPaused, setHarnessStatus } from './store';
 import { enableFastRefresh, disableFastRefresh } from './global-types';
 
 export interface PauseOptions {
@@ -20,16 +20,20 @@ export interface PauseOptions {
 }
 
 // ── Module-level state ──────────────────────────────────────────
+//
+// `isPaused` is the single reactive flag shared with the explorer UI
+// (`store.ts`). The other refs (resume resolver, abort signal, notify pool)
+// stay non-reactive — they're imperative plumbing, not UI state.
 
 let _abortSignal: AbortSignal | null = null;
 let _notifyPool: ((msg: Record<string, unknown>) => void) | null = null;
 let _resumeResolver: (() => void) | null = null;
-let _isPaused = false;
 let _mode: 'dev' | 'run' = 'dev';
 
 /**
- * Called by setup.ts at the start of each handleRun().
- * Provides the abort signal and pool notification channel for this run.
+ * Called by `HarnessRuntime.runTests` at the start of each run. Provides
+ * the abort signal (released on HMR file edit / explorer Stop) and pool
+ * notification channel for this run.
  */
 export function configurePause(opts: {
   notifyPool: (msg: Record<string, unknown>) => void;
@@ -39,18 +43,8 @@ export function configurePause(opts: {
   _notifyPool = opts.notifyPool;
   _abortSignal = opts.abortSignal;
   _mode = opts.mode;
-  _isPaused = false;
+  isPaused.value = false;
   _resumeResolver = null;
-}
-
-/**
- * Called by setup.ts at the end of handleRun() or on abort.
- */
-export function resetPause(): void {
-  _isPaused = false;
-  _resumeResolver = null;
-  _abortSignal = null;
-  _notifyPool = null;
 }
 
 /**
@@ -93,11 +87,11 @@ export async function pause(options?: PauseOptions): Promise<void> {
     throw signal.reason;
   }
 
-  _isPaused = true;
+  isPaused.value = true;
   enableFastRefresh();
 
   const label = options?.label;
-  setStatus({
+  setHarnessStatus({
     state: 'paused',
     message: label ? `Paused: ${label}` : 'Paused',
     label,
@@ -106,9 +100,8 @@ export async function pause(options?: PauseOptions): Promise<void> {
   // Notify pool — triggers terminal status, auto-screenshot, stdin listener
   if (!isExplorerOnly) {
     _notifyPool?.({
-      __pause: true,
-      label,
-      screenshot: options?.screenshot,
+      type: 'pause',
+      data: { label, screenshot: options?.screenshot },
     });
   }
 
@@ -125,12 +118,12 @@ export async function pause(options?: PauseOptions): Promise<void> {
       }
     });
   } finally {
-    _isPaused = false;
+    isPaused.value = false;
     _resumeResolver = null;
     disableFastRefresh();
     if (!isExplorerOnly) {
-      _notifyPool?.({ __pause_ended: true });
+      _notifyPool?.({ type: 'pauseEnded' });
     }
-    setStatus({ state: 'running', message: 'Resumed' });
+    setHarnessStatus({ state: 'running', message: 'Resumed' });
   }
 }

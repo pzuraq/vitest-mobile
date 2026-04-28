@@ -3,9 +3,11 @@
  *
  * Transforms *.test.{ts,tsx} files so that:
  * - Import/export declarations stay at the top level (Metro needs them)
+ * - `var _rerunCb` holds the current rerun callback from the pool
  * - All other statements (describe, it, afterEach, etc.) get wrapped in exports.__run
  * - module.hot.accept() is added so the file is its own HMR boundary
- * - module.hot.dispose() notifies listeners with the filename when the file changes
+ * - module.hot.dispose() invokes _rerunCb (set by the next __run) so the control
+ *   bridge can post an `update` for that file
  */
 
 import type {
@@ -55,6 +57,15 @@ interface BabelTypes {
   arrowFunctionExpression(params: FunctionParameter[], body: BlockStatement | Expression): ArrowFunctionExpression;
   stringLiteral(value: string): StringLiteral;
   logicalExpression(operator: '||' | '&&' | '??', left: Expression, right: Expression): LogicalExpression;
+  variableDeclaration(kind: 'var' | 'let' | 'const', decl: unknown[]): Statement;
+  variableDeclarator(id: LVal, init?: Expression | null): unknown;
+  nullLiteral(): Expression;
+  binaryExpression(
+    op: '===' | '!==' | '==' | '!=' | '<' | '>' | '...' | (string & {}),
+    left: Expression,
+    right: Expression,
+  ): Expression;
+  unaryExpression(op: 'void' | 'delete' | 'typeof' | '!' | '+' | '-', arg: Expression): Expression;
 }
 
 interface BabelPluginState {
@@ -82,18 +93,6 @@ function isTopLevelDeclaration(node: Node, t: BabelTypes): boolean {
   );
 }
 
-/**
- * Extract a short key from a filename like "packages/counter/tests/counter.test.tsx"
- * → "counter/counter.test.tsx"
- */
-function extractTestKey(filename: string): string {
-  const match = filename.match(/packages\/([^/]+)\/tests\/(.+)$/);
-  if (match) return `${match[1]}/${match[2]}`;
-  // Fallback: just the basename
-  const parts = filename.split('/');
-  return parts[parts.length - 1] ?? filename;
-}
-
 export default function testWrapperPlugin({ types: t }: { types: BabelTypes }) {
   return {
     name: 'vitest-mobile-test-wrapper',
@@ -115,28 +114,24 @@ export default function testWrapperPlugin({ types: t }: { types: BabelTypes }) {
 
         if (body.length === 0) return;
 
-        const testKey = extractTestKey(filename ?? '');
+        // var _rerunCb;
+        const varRun = t.variableDeclaration('var', [t.variableDeclarator(t.identifier('_rerunCb'), t.nullLiteral())]);
 
-        // exports.__run = function() { ...body... }
-        const runFn = t.functionExpression(null, [], t.blockStatement(body));
+        // exports.__run = function (rerunCb) { if (typeof rerunCb === 'function') _rerunCb = rerunCb; ...body }
+        const setWhenFn = t.ifStatement(
+          t.binaryExpression('===', t.unaryExpression('typeof', t.identifier('rerunCb')), t.stringLiteral('function')),
+          t.expressionStatement(t.assignmentExpression('=', t.identifier('_rerunCb'), t.identifier('rerunCb'))),
+        );
+        const runBody = t.blockStatement([setWhenFn, ...body]);
+        const runFn = t.functionExpression(null, [t.identifier('rerunCb')], runBody);
         const runExport = t.expressionStatement(
           t.assignmentExpression('=', t.memberExpression(t.identifier('exports'), t.identifier('__run')), runFn),
         );
 
-        // exports.__testKey = "counter/counter.test.tsx"
-        const keyExport = t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(t.identifier('exports'), t.identifier('__testKey')),
-            t.stringLiteral(testKey),
-          ),
-        );
-
-        // if (module.hot) { module.hot.accept(); module.hot.dispose(...) }
+        // if (module.hot) { module.hot.accept(); module.hot.dispose(() => { void _rerunCb?.() }) }
         const hmrBlock = t.ifStatement(
           t.memberExpression(t.identifier('module'), t.identifier('hot')),
           t.blockStatement([
-            // module.hot.accept()
             t.expressionStatement(
               t.callExpression(
                 t.memberExpression(
@@ -146,7 +141,6 @@ export default function testWrapperPlugin({ types: t }: { types: BabelTypes }) {
                 [],
               ),
             ),
-            // module.hot.dispose(() => { listeners?.forEach(fn => fn(testKey)) })
             t.expressionStatement(
               t.callExpression(
                 t.memberExpression(
@@ -157,23 +151,15 @@ export default function testWrapperPlugin({ types: t }: { types: BabelTypes }) {
                   t.arrowFunctionExpression(
                     [],
                     t.blockStatement([
-                      // globalThis.__TEST_HMR_LISTENERS__ && globalThis.__TEST_HMR_LISTENERS__.forEach(fn => fn(testKey))
                       t.expressionStatement(
                         t.logicalExpression(
                           '&&',
-                          t.memberExpression(t.identifier('globalThis'), t.identifier('__TEST_HMR_LISTENERS__')),
-                          t.callExpression(
-                            t.memberExpression(
-                              t.memberExpression(t.identifier('globalThis'), t.identifier('__TEST_HMR_LISTENERS__')),
-                              t.identifier('forEach'),
-                            ),
-                            [
-                              t.arrowFunctionExpression(
-                                [t.identifier('fn')],
-                                t.callExpression(t.identifier('fn'), [t.stringLiteral(testKey)]),
-                              ),
-                            ],
+                          t.binaryExpression(
+                            '===',
+                            t.unaryExpression('typeof', t.identifier('_rerunCb')),
+                            t.stringLiteral('function'),
                           ),
+                          t.callExpression(t.identifier('_rerunCb'), []),
                         ),
                       ),
                     ]),
@@ -184,7 +170,7 @@ export default function testWrapperPlugin({ types: t }: { types: BabelTypes }) {
           ]),
         );
 
-        path.node.body = [...topLevel, runExport, keyExport, hmrBlock];
+        path.node.body = [...topLevel, varRun, runExport, hmrBlock];
       },
     },
   };

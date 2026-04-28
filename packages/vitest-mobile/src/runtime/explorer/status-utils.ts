@@ -1,7 +1,7 @@
 import type { Theme } from './theme';
-import type { ModuleStatus } from './types';
+import type { UiTaskStatus } from '../tasks';
 
-export function statusIcon(status: ModuleStatus): string {
+export function statusIcon(status: UiTaskStatus): string {
   switch (status) {
     case 'pass':
       return '✓';
@@ -11,12 +11,14 @@ export function statusIcon(status: ModuleStatus): string {
       return '⋯';
     case 'pending':
       return '○';
+    case 'skip':
+      return '·';
     default:
       return '·';
   }
 }
 
-export function statusColor(status: ModuleStatus, colors: Theme['colors']): string {
+export function statusColor(status: UiTaskStatus, colors: Theme['colors']): string {
   switch (status) {
     case 'pass':
       return colors.pass;

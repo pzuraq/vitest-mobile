@@ -27,12 +27,19 @@
       "require": "./dist/babel/test-wrapper-plugin.cjs",
       "default": "./dist/babel/test-wrapper-plugin.cjs"
     },
-    "./metro": {
-      "require": "./dist/metro/withNativeTests.cjs",
-      "default": "./dist/metro/withNativeTests.cjs"
+    "./vitest-compat-plugin": {
+      "require": "./dist/babel/vitest-compat-plugin.cjs",
+      "default": "./dist/babel/vitest-compat-plugin.cjs"
     },
-    "./test-registry": {
-      "types": "./test-registry.d.ts"
+    "./inline-app-root-plugin": {
+      "require": "./dist/babel/inline-app-root-plugin.cjs",
+      "default": "./dist/babel/inline-app-root-plugin.cjs"
+    },
+    "./test-context": {
+      "types": "./src/runtime/test-context.ts",
+      "react-native": "./src/runtime/test-context.ts",
+      "require": "./dist/runtime/test-context.cjs",
+      "default": "./dist/runtime/test-context.cjs"
     },
     "./package.json": "./package.json"
   },
@@ -49,7 +56,6 @@
     "ios/",
     "android/",
     "matchers.d.ts",
-    "test-registry.d.ts",
     "VitestMobileHarness.podspec",
     "react-native.config.cjs"
   ],
@@ -80,19 +86,23 @@
     "flatted": "^3.4.2",
     "glob": "^10.0.0",
     "picocolors": "^1.1.1",
+    "picomatch": "^4.0.0",
     "react-native-safe-area-context": ">=4.0.0",
+    "signalium": "^2.4.0",
     "tinyhighlight": "^0.3.2",
     "ws": "^8.18.0"
   },
   "peerDependencies": {
     "@vitest/expect": "^4.0.0",
     "@vitest/runner": "^4.0.0",
+    "@vitest/utils": "^4.0.0",
     "react": ">=18",
     "react-native": ">=0.81.5",
     "vitest": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
+    "@types/picomatch": "^4.0.0",
     "@types/react": "^19.2.14",
     "@types/ws": "^8.5.13",
     "tsup": "^8.5.1",

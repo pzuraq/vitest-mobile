@@ -1,121 +1,71 @@
 /**
  * ReactNativeRunner — VitestRunner implementation for Hermes/RN.
+ *
+ * Constructed per-spec inside `HarnessRuntime.runTests`, with the runtime
+ * itself injected. Leaf consumer; no DI scope of its own.
+ *
+ * `onCollected` / `onTaskUpdate` delegate to the runtime, which both updates
+ * the device-side reactive layer (`task-state.ts`) and forwards to the
+ * pool's `state.rpc` so the reporter pipeline sees the same RuntimeRPC
+ * surface that Vitest's own Node workers emit.
  */
 
 import type { VitestRunner, VitestRunnerConfig, File, Test, TaskResultPack, TaskEventPack } from '@vitest/runner';
-import { importTestFile, testFileKeys } from 'vitest-mobile/test-registry';
 import { cleanup } from './render';
-import { waitForContainerReady } from './context';
 import { setupExpect } from './expect-setup';
-import { g, type MetroModule } from './global-types';
+import { g } from './global-types';
 import { symbolicateErrors } from './symbolicate';
-import { resolveRegistryKey } from './registry-utils';
-
-export interface RuntimeRpcBridge {
-  onCollected(files: File[]): void;
-  onTaskUpdate(packs: TaskResultPack[], events?: TaskEventPack[]): void;
-  onUnhandledError(err: unknown, type: string): void;
-}
-
-type TestCallback = (test: Test) => void;
-
-/**
- * Get Metro's EMPTY sentinel used for uninitialized importedAll/importedDefault.
- * We need the exact reference since require.importAll checks `!== EMPTY`.
- */
-let _emptySentinel: unknown = null;
-function getEmptySentinel(): unknown {
-  if (_emptySentinel) return _emptySentinel;
-  const getModules = g.__r?.getModules;
-  if (!getModules) return {};
-  for (const [, mod] of getModules()) {
-    if (!mod.isInitialized && mod.importedAll !== undefined) {
-      _emptySentinel = mod.importedAll;
-      return _emptySentinel;
-    }
-  }
-  return {};
-}
-
-/**
- * Force Metro to re-evaluate a test module on next require() by clearing
- * its initialized state in the module table. This ensures we always run
- * the latest factory (whether updated by HMR or still the original).
- */
-function invalidateTestModule(registryKey: string) {
-  const getModules = g.__r?.getModules;
-  if (!getModules) return;
-  const empty = getEmptySentinel();
-  const modules = getModules();
-  for (const [, mod] of modules) {
-    const name: string | undefined = mod?.verboseName ?? mod?.path;
-    if (name && name.includes(registryKey.replace(/\.[^.]+$/, ''))) {
-      mod.isInitialized = false;
-      mod.importedAll = empty;
-      mod.importedDefault = empty;
-      break;
-    }
-  }
-}
+import { waitForContainerReady } from './context';
+import type { HarnessRuntime } from './runtime';
 
 export class ReactNativeRunner implements VitestRunner {
-  config: VitestRunnerConfig;
-  private rpc: RuntimeRpcBridge;
-  private onTestDone?: TestCallback;
-
-  constructor(config: VitestRunnerConfig, rpc: RuntimeRpcBridge, onTestDone?: TestCallback) {
-    this.config = config;
-    this.rpc = rpc;
-    this.onTestDone = onTestDone;
-  }
+  constructor(
+    public config: VitestRunnerConfig,
+    private runtime: HarnessRuntime,
+  ) {}
 
   async onBeforeRunFiles(_files: File[]): Promise<void> {
+    // On slow devices (Android CI), the React tree may not have committed
+    // TestContainerProvider by the time the pool dispatches `runTests`.
+    // Wait for the provider's first render to register the module-level
+    // globals before yielding through Fabric's commit pipeline.
     await waitForContainerReady();
-    // Wait for Fabric to commit the initial view tree
     await new Promise<void>(r => g.setImmediate?.(r) ?? setTimeout(r, 0));
     await new Promise<void>(r => g.setImmediate?.(r) ?? setTimeout(r, 0));
     setupExpect();
   }
 
-  async importFile(filepath: string, source: 'collect' | 'setup'): Promise<void> {
-    // Resolve the registry key from the filepath
-    const key = this.resolveKey(filepath);
-
-    if (key) {
-      invalidateTestModule(key);
-      const mod = await importTestFile(key);
-      if (mod && typeof mod.__run === 'function') {
-        mod.__run();
-      }
-    } else {
-      console.warn(`[runner] File not found in registry: ${filepath}`);
-    }
+  // Module freshness between reruns is owned entirely by Metro's HMR — when a
+  // test file (or a transitive dep) changes, Metro's dispose/accept cycle
+  // re-evaluates the module, and the next `runtime.runTest(filepath)` here
+  // returns the new exports. For runs where nothing changed, we intentionally
+  // re-invoke `__run()` on the cached exports; the babel test-wrapper plugin
+  // keeps all describe/it/hook registration inside `__run`, so re-invoking
+  // it re-registers the suite from scratch without re-evaluating the file body.
+  importFile(filepath: string, _source: 'collect' | 'setup'): void {
+    this.runtime.runTest(filepath);
   }
 
-  /** Try to match a filepath to a test-registry key. */
-  private resolveKey(filepath: string): string | null {
-    return resolveRegistryKey(filepath, testFileKeys);
-  }
-
-  onCollected(files: File[]): void {
-    this.rpc.onCollected(files);
+  async onCollected(files: File[]): Promise<void> {
+    await this.runtime.onCollected(files);
   }
 
   async onTaskUpdate(packs: TaskResultPack[], events: TaskEventPack[]): Promise<void> {
+    // Symbolicate any errors before they leave the device so the reporter
+    // renders resolved stacks and code frames.
     for (const pack of packs) {
       const result = pack?.[1];
       if (result?.errors?.length) {
         await symbolicateErrors(result);
       }
     }
-    this.rpc.onTaskUpdate(packs, events);
+    await this.runtime.onTaskUpdate(packs, events);
   }
 
   async onAfterRunTask(test: Test): Promise<void> {
     if (test.result?.state === 'fail') {
       await symbolicateErrors(test.result);
     }
-    this.onTestDone?.(test);
     await cleanup();
   }
 }

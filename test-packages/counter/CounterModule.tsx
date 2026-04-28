@@ -38,8 +38,8 @@ export function CounterModule({ userId, variant = 'default', onCountChange }: Co
       if (!response.ok) throw new Error('Request failed');
       const data = await response.json();
       setApiResult(String(data.value));
-    } catch (err: any) {
-      setError(err?.message ?? 'Unknown error');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }

@@ -1,48 +1,100 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { useTheme } from '@shopify/restyle';
+import { component } from 'signalium/react';
 import { Text } from './atoms';
-import { statusIcon, statusColor } from './status-utils';
+import { statusColor, statusIcon } from './status-utils';
 import type { Theme } from './theme';
-import type { ModuleStatus } from './types';
+import { harnessStatus } from '../store';
+import {
+  aggregateStatus,
+  collectedFiles,
+  countByStatus,
+  fileLabel,
+  getTaskFields,
+  isFile,
+  type UiTaskStatus,
+} from '../tasks';
+import type { File, Task } from '@vitest/runner';
 
 interface PeekBarProps {
-  running: boolean;
-  passed: number;
-  failed: number;
-  skipped: number;
-  completedFiles: number;
-  totalFiles: number;
-  currentTestPath: string[];
-  currentTestName: string | null;
-  currentStatus: ModuleStatus;
   onDebug: () => void;
   onRerunAll: () => void;
   onStop: () => void;
 }
 
-export function PeekBar({
-  running,
-  passed,
-  failed,
-  skipped,
-  completedFiles,
-  totalFiles,
-  currentTestPath,
-  currentTestName,
-  currentStatus,
-  onDebug,
-  onRerunAll,
-  onStop,
-}: PeekBarProps) {
+/**
+ * Find the leaf-most task that is currently `'running'`. Used to populate
+ * the peek bar's "current test" / breadcrumb. Falls back to the most recent
+ * non-pending task if nothing is currently running, otherwise null.
+ */
+function findCurrentTest(files: readonly File[]): Task | null {
+  let running: Task | null = null;
+  let lastFinished: Task | null = null;
+  function walk(task: Task) {
+    if (task.type === 'test') {
+      const status = getTaskFields(task.id)?.status.value ?? 'pending';
+      if (status === 'running') {
+        running = task;
+      } else if (status === 'pass' || status === 'fail' || status === 'skip') {
+        lastFinished = task;
+      }
+      return;
+    }
+    if ('tasks' in task && Array.isArray(task.tasks)) {
+      for (const child of task.tasks as Task[]) walk(child);
+    }
+  }
+  for (const file of files) walk(file);
+  return running ?? lastFinished;
+}
+
+function buildBreadcrumb(task: Task | null): { filePath: string; testName: string | null } {
+  if (!task) return { filePath: '', testName: null };
+  // Walk up to find the file
+  let cur: Task | undefined = task;
+  while (cur && !isFile(cur)) cur = cur.suite as Task | undefined;
+  const filePath = cur && isFile(cur) ? fileLabel(cur) : '';
+  const testName = task.type === 'test' ? task.name : null;
+  return { filePath, testName };
+}
+
+export const PeekBar = component(function PeekBar({ onDebug, onRerunAll, onStop }: PeekBarProps) {
   const { colors } = useTheme<Theme>();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const allDone = !running && completedFiles > 0;
-  const filePath = currentTestPath[0] ?? '';
+  const files = collectedFiles();
+  const status = harnessStatus.value;
+  const running = status.state === 'running';
+
+  // Aggregate counts across all files
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const file of files) {
+    const c = countByStatus(file);
+    passed += c.passed;
+    failed += c.failed;
+    // "skipped" isn't reported separately by countByStatus; compute it directly.
+    skipped += countSkipped(file);
+  }
+
+  const totalFiles = files.length;
+  const completedFiles = files.filter(f => {
+    const s = aggregateStatus(f);
+    return s !== 'pending' && s !== 'running';
+  }).length;
   const moduleCurrent =
     totalFiles > 0 ? (running ? Math.min(completedFiles + 1, totalFiles) : Math.min(completedFiles, totalFiles)) : 0;
   const moduleFraction = `${moduleCurrent}/${totalFiles}`;
+
+  const currentTask = running ? findCurrentTest(files) : null;
+  const { filePath, testName } = buildBreadcrumb(currentTask);
+  const currentStatus: UiTaskStatus = currentTask
+    ? (getTaskFields(currentTask.id)?.status.value ?? 'pending')
+    : 'pending';
+
+  const allDone = !running && completedFiles > 0;
 
   return (
     <View style={styles.container}>
@@ -53,9 +105,9 @@ export function PeekBar({
         <Text style={styles.moduleCounter}>{moduleFraction}</Text>
       </View>
 
-      {currentTestName && running ? (
+      {testName && running ? (
         <Text variant="body" numberOfLines={1} style={[styles.testName, { color: statusColor(currentStatus, colors) }]}>
-          {statusIcon(currentStatus)} {currentTestName}
+          {statusIcon(currentStatus)} {testName}
         </Text>
       ) : allDone ? (
         <Text
@@ -94,6 +146,19 @@ export function PeekBar({
       </View>
     </View>
   );
+});
+
+function countSkipped(task: Task): number {
+  if (task.type === 'test') {
+    const status = getTaskFields(task.id)?.status.value ?? 'pending';
+    return status === 'skip' ? 1 : 0;
+  }
+  if ('tasks' in task && Array.isArray(task.tasks)) {
+    let n = 0;
+    for (const child of task.tasks as Task[]) n += countSkipped(child);
+    return n;
+  }
+  return 0;
 }
 
 const createStyles = (colors: Theme['colors']) =>

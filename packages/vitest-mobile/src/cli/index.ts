@@ -402,13 +402,18 @@ cli
       await withSpinner(
         { command: 'boot-device', platform, initialMessage: `Booting ${platform} device…` },
         async () => {
-          await ensureDevice(platform, {
-            headless: options.headless ?? false,
-            wsPort: Number(options.wsPort),
-            metroPort: Number(options.metroPort),
-            apiLevel: options.apiLevel ? Number(options.apiLevel) : undefined,
-            appDir,
-          });
+          await ensureDevice(
+            platform,
+            {
+              appDir,
+              port: Number(options.wsPort),
+              metroPort: Number(options.metroPort),
+            },
+            {
+              headless: options.headless ?? false,
+              apiLevel: options.apiLevel ? Number(options.apiLevel) : undefined,
+            },
+          );
         },
       );
     },

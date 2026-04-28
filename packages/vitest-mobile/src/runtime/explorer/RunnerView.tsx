@@ -2,61 +2,31 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, View, StyleSheet, Dimensions } from 'react-native';
 import { useTheme } from '@shopify/restyle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { component, useContext } from 'signalium/react';
+import type { File, Task } from '@vitest/runner';
 import { SimpleBottomSheet, type SimpleBottomSheetRef } from './SimpleBottomSheet';
 import { TestContainer } from '../context';
 import { resume } from '../pause';
-import { onStatusChange, onTestEvent } from '../state';
-import { sendToPool } from '../setup';
+import { HarnessCtx } from '../runtime';
 import { getMetroBaseUrl } from '../network-config';
 import { PeekBar } from './PeekBar';
 import { TestTree } from './TestTree';
 import { TestDetailView } from './TestDetailView';
 import { FilterPills, SearchBar } from './FilterPills';
 import { Text } from './atoms';
-import {
-  buildFileTree,
-  mergeTestResults,
-  setFileStatus,
-  filterByStatus,
-  filterBySearch,
-  getBreadcrumb,
-  collectFilePaths,
-  collectTestNames,
-  findNodeById,
-} from './tree-utils';
 import type { Theme } from './theme';
-import type { TestModule, TestTreeNode, ModuleStatus, StatusFilter } from './types';
+import { detailTaskId, isConnected, isPaused } from '../store';
 
-interface Props {
-  modules: TestModule[];
-}
-
-export function RunnerView({ modules }: Props) {
+export const RunnerView = component(function RunnerView() {
   const { colors } = useTheme<Theme>();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const allFiles = useMemo(() => modules.flatMap(m => m.files), [modules]);
+  const runtime = useContext(HarnessCtx);
 
-  const [tree, setTree] = useState<TestTreeNode[]>(() => buildFileTree(allFiles));
-  const treeRef = useRef(tree);
-  treeRef.current = tree;
-
-  const [running, setRunning] = useState(false);
-  const [passed, setPassed] = useState(0);
-  const [failed, setFailed] = useState(0);
-  const [skipped, setSkipped] = useState(0);
-  const [completedFiles, setCompletedFiles] = useState(0);
-  const [totalFiles, setTotalFiles] = useState(allFiles.length);
-
-  const [currentTestPath, setCurrentTestPath] = useState<string[]>(modules.map(m => m.name));
-  const [currentTestName, setCurrentTestName] = useState<string | null>(null);
-  const [currentStatus, setCurrentStatus] = useState<ModuleStatus>('pending');
-
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [detailNode, setDetailNode] = useState<TestTreeNode | null>(null);
-  const [paused, setPaused] = useState(false);
-  const [connected, setConnected] = useState(false);
+  const connected = isConnected.value;
+  const paused = isPaused.value;
+  const detailId = detailTaskId.value;
+  const hasDetail = detailId !== null;
 
   const sheetRef = useRef<SimpleBottomSheetRef>(null);
   const snapPoints = useMemo(() => ['45%', '70%'], []);
@@ -85,137 +55,41 @@ export function RunnerView({ modules }: Props) {
     extrapolate: 'clamp',
   });
 
+  // Open the detail panel as soon as something is selected.
   useEffect(() => {
-    return onStatusChange(status => {
-      setPaused(status.state === 'paused');
-      const isConnected =
-        status.state === 'connected' ||
-        status.state === 'running' ||
-        status.state === 'paused' ||
-        status.state === 'done';
-      setConnected(isConnected);
-    });
-  }, []);
+    if (hasDetail) sheetRef.current?.snapToIndex(1);
+  }, [hasDetail]);
 
-  const displayPathsRef = useRef(new Map<string, string>());
-
-  useEffect(() => {
-    let currentFile = '';
-
-    return onTestEvent(event => {
-      switch (event.type) {
-        case 'run-start': {
-          const fileCount = Math.max(event.fileCount ?? 1, 1);
-          setPassed(0);
-          setFailed(0);
-          setSkipped(0);
-          setCompletedFiles(0);
-          setTotalFiles(fileCount);
-          displayPathsRef.current.clear();
-          setRunning(true);
-          break;
-        }
-
-        case 'file-start': {
-          currentFile = event.file ?? '';
-          if (event.displayPath) {
-            displayPathsRef.current.set(currentFile, event.displayPath);
-          }
-          const display = event.displayPath ?? currentFile;
-          setCurrentTestPath([display]);
-          setCurrentTestName(null);
-          setCurrentStatus('running');
-
-          setTree(prev => {
-            const next = structuredClone(prev);
-            const fileNode = findNodeById(next, currentFile);
-            if (fileNode && event.displayPath) {
-              fileNode.label = event.displayPath;
-            }
-            setFileStatus(next, currentFile, 'running');
-            treeRef.current = next;
-            return next;
-          });
-          break;
-        }
-
-        case 'test-done': {
-          const file = event.file ?? currentFile;
-          if (event.state === 'pass') setPassed(p => p + 1);
-          if (event.state === 'fail') setFailed(f => f + 1);
-          if (event.state === 'skip') setSkipped(s => s + 1);
-
-          const suitePath = event.suitePath ?? [];
-          const display = event.displayPath ?? displayPathsRef.current.get(file) ?? file;
-          setCurrentTestPath([display, ...suitePath]);
-          setCurrentTestName(event.testName ?? null);
-          setCurrentStatus(event.state === 'pass' ? 'pass' : event.state === 'fail' ? 'fail' : 'running');
-
-          setTree(prev => {
-            const next = structuredClone(prev);
-            mergeTestResults(next, file, [
-              {
-                id: event.testId ?? event.testName ?? '',
-                name: event.testName ?? '',
-                state: event.state ?? 'pending',
-                duration: event.duration,
-                error: event.error,
-                suitePath: event.suitePath,
-              },
-            ]);
-            treeRef.current = next;
-            return next;
-          });
-          break;
-        }
-
-        case 'file-done': {
-          setCompletedFiles(c => c + 1);
-          break;
-        }
-
-        case 'run-done': {
-          setRunning(false);
-          setCurrentStatus('idle');
-          break;
-        }
-      }
-    });
-  }, [allFiles]);
-
-  const handleSelectNode = useCallback((node: TestTreeNode) => {
-    setDetailNode(node);
-    sheetRef.current?.snapToIndex(1);
+  const handleSelectNode = useCallback((task: Task) => {
+    detailTaskId.value = task.id;
   }, []);
 
   const handleDetailBack = useCallback(() => {
-    setDetailNode(null);
+    detailTaskId.value = null;
   }, []);
 
-  const handleRerun = useCallback((node: TestTreeNode) => {
-    const files = collectFilePaths(node);
+  const handleDrillDown = useCallback((child: Task) => {
+    detailTaskId.value = child.id;
+  }, []);
+
+  const handleRerun = useCallback(() => {
+    const id = detailTaskId.value;
+    if (!id || !runtime) return;
+    const files = collectFilePathsForTaskId(runtime.collectedFiles.value, id);
     if (files.length === 0) return;
-
-    let pattern: string | undefined;
-    if (node.type === 'test' && node.testName) {
-      pattern = `^${escapeRegex(node.testName)}$`;
-    } else if (node.type !== 'file' && node.type !== 'group') {
-      const names = collectTestNames(node);
-      if (names.length > 0) {
-        pattern = names.map(n => `^${escapeRegex(n)}$`).join('|');
-      }
-    }
-
-    sendToPool({ __rerun: true, files, testNamePattern: pattern, label: node.label });
-  }, []);
+    runtime.send({ type: 'update', data: { created: [], deleted: [], updated: files } });
+  }, [runtime]);
 
   const handleRerunAll = useCallback(() => {
-    sendToPool({ __rerun: true, files: allFiles, label: 'all' });
-  }, [allFiles]);
+    if (!runtime) return;
+    const files = runtime.collectedFiles.value.map(f => f.filepath);
+    if (files.length === 0) return;
+    runtime.send({ type: 'update', data: { created: [], deleted: [], updated: files } });
+  }, [runtime]);
 
   const handleStop = useCallback(() => {
-    sendToPool({ __cancel: true });
-  }, []);
+    runtime?.cancel();
+  }, [runtime]);
 
   const handleOpenDebugger = useCallback(() => {
     fetch(`${getMetroBaseUrl()}/open-debugger`, {
@@ -225,27 +99,6 @@ export function RunnerView({ modules }: Props) {
       /* ignore */
     });
   }, []);
-
-  const handleDrillDown = useCallback((child: TestTreeNode) => {
-    setDetailNode(child);
-  }, []);
-
-  const filteredTree = useMemo(() => {
-    let result = tree;
-    result = filterByStatus(result, statusFilter);
-    result = filterBySearch(result, searchQuery);
-    return result;
-  }, [tree, statusFilter, searchQuery]);
-
-  const currentDetailNode = useMemo(() => {
-    if (!detailNode) return null;
-    return findNodeById(tree, detailNode.id) ?? detailNode;
-  }, [tree, detailNode]);
-
-  const detailBreadcrumb = useMemo(() => {
-    if (!currentDetailNode) return [];
-    return getBreadcrumb(tree, currentDetailNode.id);
-  }, [tree, currentDetailNode]);
 
   return (
     <View style={styles.root}>
@@ -293,31 +146,15 @@ export function RunnerView({ modules }: Props) {
             <Text style={styles.disconnectedSubtitle}>Waiting for vitest dev server...</Text>
           </View>
         ) : (
-          <PeekBar
-            running={running}
-            passed={passed}
-            failed={failed}
-            skipped={skipped}
-            completedFiles={completedFiles}
-            totalFiles={totalFiles}
-            currentTestPath={currentTestPath}
-            currentTestName={currentTestName}
-            currentStatus={currentStatus}
-            onDebug={handleOpenDebugger}
-            onRerunAll={handleRerunAll}
-            onStop={handleStop}
-          />
+          <PeekBar onDebug={handleOpenDebugger} onRerunAll={handleRerunAll} onStop={handleStop} />
         )}
 
         {connected && (
           <View style={styles.sheetBody}>
-            {currentDetailNode ? (
+            {hasDetail ? (
               <TestDetailView
-                node={currentDetailNode}
-                breadcrumb={detailBreadcrumb}
-                running={running && currentDetailNode.status === 'running'}
                 onBack={handleDetailBack}
-                onRerun={() => handleRerun(currentDetailNode)}
+                onRerun={handleRerun}
                 onStop={handleStop}
                 onDrillDown={handleDrillDown}
               />
@@ -327,9 +164,9 @@ export function RunnerView({ modules }: Props) {
                   <Text style={styles.treeTitle}>Tests</Text>
                 </View>
 
-                <FilterPills active={statusFilter} onChange={setStatusFilter} />
+                <FilterPills />
 
-                <TestTree nodes={filteredTree} onSelectNode={handleSelectNode} />
+                <TestTree onSelectNode={handleSelectNode} />
 
                 {paused && (
                   <View style={styles.pauseBar}>
@@ -340,7 +177,7 @@ export function RunnerView({ modules }: Props) {
                   </View>
                 )}
 
-                <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
+                <SearchBar />
               </View>
             )}
           </View>
@@ -348,10 +185,31 @@ export function RunnerView({ modules }: Props) {
       </SimpleBottomSheet>
     </View>
   );
+});
+
+/** Walk the tree starting at task id; return the filepath of every File ancestor or descendant under a non-File task. */
+function collectFilePathsForTaskId(files: readonly File[], id: string): string[] {
+  const out = new Set<string>();
+  for (const file of files) {
+    if (file.id === id) {
+      out.add(file.filepath);
+      continue;
+    }
+    if (containsId(file, id)) {
+      out.add(file.filepath);
+    }
+  }
+  return Array.from(out);
 }
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function containsId(task: Task, id: string): boolean {
+  if (task.id === id) return true;
+  if ('tasks' in task && Array.isArray(task.tasks)) {
+    for (const child of task.tasks as Task[]) {
+      if (containsId(child, id)) return true;
+    }
+  }
+  return false;
 }
 
 const createStyles = (colors: Theme['colors']) =>

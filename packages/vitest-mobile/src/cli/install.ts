@@ -48,7 +48,7 @@ export async function install(platform: string, options: InstallOptions): Promis
   }
 
   updateStatus(`Booting ${platform} device…`);
-  await ensureDevice(platform as 'ios' | 'android', { headless: false, appDir });
+  await ensureDevice(platform as 'ios' | 'android', { appDir, bundleId }, { headless: false });
 
   updateStatus(`Installing ${platform} harness binary…`);
   if (platform === 'ios') {

@@ -5,9 +5,17 @@
  * so test failures show clickable file:line references.
  */
 
+import type { TaskResult } from '@vitest/runner';
+import type { TestError } from '@vitest/utils';
 import { getMetroBaseUrl } from './network-config';
 
-export interface StackFrame {
+/** Shapes we symbolicate in-place; matches vitest errors plus optional `stackStr` / `codeFrame`. */
+type SymbolicateableError = Partial<TestError> & { stackStr?: string; codeFrame?: string };
+
+/** Full task result or a minimal `{ errors }` shape (e.g. tests). */
+type SymbolicateableResult = TaskResult | { errors?: SymbolicateableError[] } | undefined;
+
+interface StackFrame {
   file: string;
   lineNumber: number;
   column: number;
@@ -42,15 +50,35 @@ function normalizeMetroFile(file: string): string {
 }
 
 /**
- * Parse a Hermes/JSC stack trace string into structured frames.
+ * Frame matchers, applied in order to each non-empty stack line. First
+ * match wins. Each pattern captures 3 or 4 groups: optional methodName,
+ * file, line, column. When `methodName` is undefined (either the pattern
+ * has no name capture at all, or the capture was optional and absent),
+ * we fall back to `<anonymous>`.
  *
- * Hermes format:  functionName@file:line:col
- * V8 format:      at functionName (file:line:col)
- *
- * The file part can contain colons (URLs, Windows paths) so we anchor
- * on the final :number:number pattern.
+ * The file portion is allowed to contain colons (URLs, Windows paths) —
+ * patterns anchor on the trailing `:line:col`.
  */
-export function parseStack(stack: string): { frames: StackFrame[]; message: string } {
+const FRAME_PATTERNS: readonly RegExp[] = [
+  // Hermes: name@file:line:col
+  /^(.+?)@(.*):(\d+):(\d+)$/,
+  // Hermes internal: name address at file:line:col
+  /^(.+?)\s+address at\s+(.+):(\d+):(\d+)$/,
+  // V8: at name (file:line:col)
+  /^at\s+(.+?)\s+\((.+):(\d+):(\d+)\)$/,
+  // V8 anonymous: at file:line:col  (no name capture — fills as <anonymous>)
+  /^at\s+()(.+):(\d+):(\d+)$/,
+  // Vitest pretty stack: ❯ [name] path/to/file.ts:10:5
+  /^❯\s+(?:(.+?)\s+)?(.+):(\d+):(\d+)$/,
+];
+
+/**
+ * Parse a Hermes/JSC/V8/Vitest-pretty stack trace string into structured
+ * frames. Hermes format is `functionName@file:line:col`; V8 format is
+ * `at functionName (file:line:col)`. The file part can contain colons
+ * (URLs, Windows paths) so patterns anchor on the final `:number:number`.
+ */
+function parseStack(stack: string): { frames: StackFrame[]; message: string } {
   const lines = stack.split('\n');
   const frames: StackFrame[] = [];
   let messageEnd = 0;
@@ -59,71 +87,17 @@ export function parseStack(stack: string): { frames: StackFrame[]; message: stri
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
 
-    // Hermes: name@file:line:col — match the last two :number segments
-    const hermesMatch = trimmed.match(/^(.+?)@(.*):(\d+):(\d+)$/);
-    if (hermesMatch) {
+    for (const pattern of FRAME_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (!match) continue;
       if (frames.length === 0) messageEnd = i;
       frames.push({
-        methodName: hermesMatch[1],
-        file: normalizeMetroFile(hermesMatch[2]),
-        lineNumber: parseInt(hermesMatch[3], 10),
-        column: parseInt(hermesMatch[4], 10),
+        methodName: match[1] || '<anonymous>',
+        file: normalizeMetroFile(match[2]),
+        lineNumber: parseInt(match[3], 10),
+        column: parseInt(match[4], 10),
       });
-      continue;
-    }
-
-    // V8: at name (file:line:col)
-    const v8Match = trimmed.match(/^at\s+(.+?)\s+\((.+):(\d+):(\d+)\)$/);
-    if (v8Match) {
-      if (frames.length === 0) messageEnd = i;
-      frames.push({
-        methodName: v8Match[1],
-        file: normalizeMetroFile(v8Match[2]),
-        lineNumber: parseInt(v8Match[3], 10),
-        column: parseInt(v8Match[4], 10),
-      });
-      continue;
-    }
-
-    // V8 anonymous: at file:line:col
-    const v8AnonMatch = trimmed.match(/^at\s+(.+):(\d+):(\d+)$/);
-    if (v8AnonMatch) {
-      if (frames.length === 0) messageEnd = i;
-      frames.push({
-        methodName: '<anonymous>',
-        file: normalizeMetroFile(v8AnonMatch[1]),
-        lineNumber: parseInt(v8AnonMatch[2], 10),
-        column: parseInt(v8AnonMatch[3], 10),
-      });
-      continue;
-    }
-
-    // Hermes internal: name address at file:line:col
-    const internalMatch = trimmed.match(/^(.+?)\s+address at\s+(.+):(\d+):(\d+)$/);
-    if (internalMatch) {
-      if (frames.length === 0) messageEnd = i;
-      frames.push({
-        methodName: internalMatch[1],
-        file: normalizeMetroFile(internalMatch[2]),
-        lineNumber: parseInt(internalMatch[3], 10),
-        column: parseInt(internalMatch[4], 10),
-      });
-      continue;
-    }
-
-    // Vitest pretty stack output format:
-    //   ❯ functionName path/to/file.ts:10:5
-    //   ❯ path/to/file.ts:10:5
-    const vitestFrameMatch = trimmed.match(/^❯\s+(?:(.+?)\s+)?(.+):(\d+):(\d+)$/);
-    if (vitestFrameMatch) {
-      if (frames.length === 0) messageEnd = i;
-      frames.push({
-        methodName: vitestFrameMatch[1] ?? '<anonymous>',
-        file: normalizeMetroFile(vitestFrameMatch[2]),
-        lineNumber: parseInt(vitestFrameMatch[3], 10),
-        column: parseInt(vitestFrameMatch[4], 10),
-      });
-      continue;
+      break;
     }
   }
 
@@ -131,12 +105,53 @@ export function parseStack(stack: string): { frames: StackFrame[]; message: stri
   return { frames, message };
 }
 
-export function isRelevantFrame(f: StackFrame): boolean {
+/**
+ * Paths inside vitest-mobile's runtime shim (matchers, poll/retry, setup).
+ * These appear at the top of any assertion-failure stack because the throw
+ * originates inside the matcher; filtering them here surfaces the user's
+ * test frame (when present) instead of our internal machinery.
+ */
+const INTERNAL_RUNTIME_RE = /vitest-mobile[/\\](?:src|dist)[/\\]runtime[/\\]/;
+
+function isInternalRuntimeFrame(filePath: string | undefined): boolean {
+  return !!filePath && INTERNAL_RUNTIME_RE.test(filePath);
+}
+
+function isBundleOrHttpFrame(f: StackFrame): boolean {
+  return f.file.includes('.bundle') || f.file.startsWith('http://') || f.file.startsWith('https://');
+}
+
+/**
+ * Second round-trip: Metro can render a snippet for a single on-disk
+ * `StackFrame` (project-relative or absolute) via getCodeFrame + readFile
+ * on the main server — no source map when `urls` is empty.
+ */
+async function tryCodeFrameForSourceFileFrame(f: StackFrame): Promise<string | undefined> {
+  if (isBundleOrHttpFrame(f) || isInternalRuntimeFrame(f.file) || f.file.includes('node_modules')) {
+    return;
+  }
+  try {
+    const res = await fetch(`${getMetroBaseUrl()}/symbolicate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stack: [f] }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { codeFrame?: { content?: string; fileName?: string } | null };
+    if (isInternalRuntimeFrame(data.codeFrame?.fileName)) return;
+    return data.codeFrame?.content;
+  } catch {
+    return;
+  }
+}
+
+function isRelevantFrame(f: StackFrame): boolean {
   const file = f.file;
   if (!file) return false;
   if (file.includes('node_modules')) return false;
   if (file.includes('InternalBytecode')) return false;
   if (file.startsWith('address at')) return false;
+  if (isInternalRuntimeFrame(file)) return false;
   return true;
 }
 
@@ -146,7 +161,7 @@ export function isRelevantFrame(f: StackFrame): boolean {
  * Strips library/runtime noise (node_modules, babel helpers, Hermes internals)
  * so vitest's reporter surfaces the test file location with a code snippet.
  */
-export function rebuildStack(message: string, frames: StackFrame[]): string {
+function rebuildStack(message: string, frames: StackFrame[]): string {
   const relevant = frames.filter(isRelevantFrame);
   const toUse = relevant.length > 0 ? relevant : frames;
 
@@ -154,17 +169,26 @@ export function rebuildStack(message: string, frames: StackFrame[]): string {
   return message + '\n' + lines.join('\n');
 }
 
+interface SymbolicateResult {
+  stack: string;
+  codeFrame?: string;
+}
+
 /**
  * Symbolicate a stack trace string using Metro's endpoint.
- * Returns the rewritten stack, or the original if symbolication fails.
+ *
+ * Returns the rewritten stack plus — when Metro can resolve the first relevant
+ * frame to a readable source file — a pre-rendered `@babel/code-frame` snippet
+ * Metro attaches to its response. Falls back to the original stack and an
+ * undefined code frame if symbolication fails.
  */
-export async function symbolicateStack(stack: string): Promise<string> {
+export async function symbolicate(stack: string): Promise<SymbolicateResult> {
   const { frames, message } = parseStack(stack);
-  if (frames.length === 0) return stack;
+  if (frames.length === 0) return { stack };
   const framesForSymbolication = frames.filter(
     f => f.file.includes('.bundle') || f.file.startsWith('http://') || f.file.startsWith('https://'),
   );
-  if (framesForSymbolication.length === 0) return stack;
+  if (framesForSymbolication.length === 0) return { stack };
 
   try {
     const res = await fetch(`${getMetroBaseUrl()}/symbolicate`, {
@@ -173,32 +197,71 @@ export async function symbolicateStack(stack: string): Promise<string> {
       body: JSON.stringify({ stack: framesForSymbolication }),
     });
 
-    if (!res.ok) return stack;
+    if (!res.ok) return { stack };
 
-    const data = (await res.json()) as { stack: StackFrame[] };
+    const data = (await res.json()) as {
+      stack?: StackFrame[];
+      codeFrame?: { content?: string; fileName?: string } | null;
+    };
     const mapped = data.stack ?? framesForSymbolication;
+    // Substitute only bundle/http frames with Metro's symbolicated result;
+    // keep prepended in-memory frames (e.g. test call sites from
+    // expect.element) in place.
+    const needsBundle = isBundleOrHttpFrame;
+    let mi = 0;
+    const mergedFrames = frames.map(f => {
+      if (needsBundle(f)) {
+        const next = mapped[mi++];
+        return next ?? f;
+      }
+      return f;
+    });
+    // Drop Metro's codeFrame when it points at our own runtime internals —
+    // otherwise every matcher failure renders a snippet of expect-setup.ts
+    // or retry.ts instead of something useful.
+    let codeFrame = isInternalRuntimeFrame(data.codeFrame?.fileName) ? undefined : data.codeFrame?.content;
 
-    return rebuildStack(message, mapped);
+    // First response codeFrame is built from the bundle-side stack (often
+    // expect-setup or retry). After merging, the first *relevant* frame is
+    // usually the test file — same as Vitest browser / old pool path: ask
+    // Metro to render @babel/code-frame for that on-disk file only.
+    if (!codeFrame) {
+      const firstRelevant = mergedFrames.find(isRelevantFrame);
+      if (firstRelevant) {
+        codeFrame = (await tryCodeFrameForSourceFileFrame(firstRelevant)) ?? codeFrame;
+      }
+    }
+
+    const rebuilt = rebuildStack(message, mergedFrames);
+    return { stack: rebuilt, codeFrame };
   } catch {
-    return stack;
+    return { stack };
   }
 }
 
 /**
- * Symbolicate all error stacks in a vitest test result in-place.
+ * Symbolicate all error stacks in a vitest test result in-place. Also
+ * populates `err.codeFrame` with the snippet Metro produces so Vitest's
+ * reporter can render a highlighted source excerpt under each failure.
  */
-export async function symbolicateErrors(
-  result: { errors?: Array<{ stack?: string; stackStr?: string }> } | undefined,
-): Promise<void> {
+export async function symbolicateErrors(result: SymbolicateableResult): Promise<void> {
   if (!result?.errors?.length) return;
 
   await Promise.all(
-    result.errors.map(async err => {
+    result.errors.map(async (err: SymbolicateableError) => {
+      let codeFrame: string | undefined;
       if (err.stack) {
-        err.stack = await symbolicateStack(err.stack);
+        const r = await symbolicate(err.stack);
+        err.stack = r.stack;
+        codeFrame = r.codeFrame;
       }
       if (err.stackStr) {
-        err.stackStr = await symbolicateStack(err.stackStr);
+        const r = await symbolicate(err.stackStr);
+        err.stackStr = r.stack;
+        codeFrame = codeFrame ?? r.codeFrame;
+      }
+      if (codeFrame && !err.codeFrame) {
+        err.codeFrame = codeFrame;
       }
     }),
   );

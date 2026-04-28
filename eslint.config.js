@@ -14,6 +14,7 @@ export default tseslint.config(
       'docs/src/markdoc',
       'docs-fetchium/src/markdoc',
       '**/__fixtures__',
+      '**/fixtures',
     ],
   },
   {

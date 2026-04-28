@@ -1,58 +1,60 @@
 import React, { useMemo } from 'react';
 import { ScrollView, TouchableOpacity, StyleSheet, View } from 'react-native';
 import { useTheme } from '@shopify/restyle';
+import { component } from 'signalium/react';
+import type { Task } from '@vitest/runner';
 import { Text } from './atoms';
 import { MiniTree } from './TestTree';
-import { countByStatus, collectConsoleLogs } from './tree-utils';
 import { statusIcon, statusColor } from './status-utils';
 import type { Theme } from './theme';
-import type { TestTreeNode, ConsoleLogEntry } from './types';
-
-function logColor(level: ConsoleLogEntry['level'], colors: Theme['colors']): string {
-  switch (level) {
-    case 'error':
-      return colors.fail;
-    case 'warn':
-      return colors.warning;
-    default:
-      return colors.textMuted;
-  }
-}
+import {
+  aggregateDuration,
+  aggregateStatus,
+  countByStatus,
+  detailBreadcrumb,
+  detailNode,
+  getChildren,
+  getTaskFields,
+  taskKind,
+  taskLabel,
+} from '../tasks';
 
 interface TestDetailViewProps {
-  node: TestTreeNode;
-  breadcrumb: string[];
-  running: boolean;
   onBack: () => void;
   onRerun: () => void;
   onStop: () => void;
-  onDrillDown: (child: TestTreeNode) => void;
+  onDrillDown: (task: Task) => void;
 }
 
-export function TestDetailView({
-  node,
-  breadcrumb,
-  running,
+export const TestDetailView = component<TestDetailViewProps>(function TestDetailView({
   onBack,
   onRerun,
   onStop,
   onDrillDown,
-}: TestDetailViewProps) {
+}) {
   const { colors } = useTheme<Theme>();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const isGroup = node.type !== 'test';
-  const counts = isGroup ? countByStatus(node) : null;
-  const isRunning = running || node.status === 'running';
+  const node = detailNode();
+  if (!node) return null;
+  const breadcrumb = detailBreadcrumb();
+  const kind = taskKind(node);
+  const isLeaf = kind === 'test';
+  const isGroup = !isLeaf;
 
-  const allConsoleLogs = isGroup
-    ? collectConsoleLogs(node)
-    : node.consoleLogs?.length
-      ? [{ testName: node.label, logs: node.consoleLogs }]
-      : [];
+  const status = isLeaf ? (getTaskFields(node.id)?.status.value ?? 'pending') : aggregateStatus(node);
+  const duration = isLeaf ? getTaskFields(node.id)?.duration.value : aggregateDuration(node);
+  const error = isLeaf ? getTaskFields(node.id)?.error.value : undefined;
+
+  const counts = isGroup ? countByStatus(node) : null;
+  const isRunning = status === 'running';
 
   const failedChildren = isGroup
-    ? node.children.filter(c => c.status === 'fail' || (c.type !== 'test' && hasFailedDescendant(c)))
+    ? getChildren(node).filter(child => {
+        const childStatus =
+          taskKind(child) === 'test' ? (getTaskFields(child.id)?.status.value ?? 'pending') : aggregateStatus(child);
+        return childStatus === 'fail';
+      })
     : [];
 
   return (
@@ -75,19 +77,17 @@ export function TestDetailView({
       <ScrollView style={styles.scrollContent} contentContainerStyle={styles.scrollContentInner}>
         <View style={styles.identity}>
           <View style={styles.identityRow}>
-            <Text style={[styles.identityIcon, { color: statusColor(node.status, colors) }]}>
-              {statusIcon(node.status)}
-            </Text>
+            <Text style={[styles.identityIcon, { color: statusColor(status, colors) }]}>{statusIcon(status)}</Text>
             <Text style={styles.identityName} numberOfLines={2}>
-              {node.label}
+              {taskLabel(node)}
             </Text>
           </View>
           {breadcrumb.length > 0 && <Text style={styles.breadcrumb}>{breadcrumb.join(' > ')}</Text>}
           <View style={styles.identityMeta}>
             {isRunning ? (
               <Text style={styles.metaRunning}>Running...</Text>
-            ) : node.duration != null && node.duration > 0 ? (
-              <Text style={styles.metaDuration}>{Math.round(node.duration)}ms</Text>
+            ) : duration != null && duration > 0 ? (
+              <Text style={styles.metaDuration}>{Math.round(duration)}ms</Text>
             ) : null}
           </View>
           {counts && (
@@ -98,18 +98,18 @@ export function TestDetailView({
           )}
         </View>
 
-        {isGroup && node.children.length > 0 && (
+        {isGroup && getChildren(node).length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Tests</Text>
-            <MiniTree nodes={node.children} onSelectNode={onDrillDown} />
+            <MiniTree tasks={getChildren(node)} onSelectNode={onDrillDown} />
           </View>
         )}
 
-        {!isGroup && node.error && (
+        {!isGroup && error && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Error</Text>
             <View style={styles.errorBlock}>
-              <Text style={styles.errorText}>{node.error}</Text>
+              <Text style={styles.errorText}>{error}</Text>
             </View>
           </View>
         )}
@@ -117,51 +117,23 @@ export function TestDetailView({
         {isGroup && failedChildren.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Errors ({failedChildren.length})</Text>
-            {failedChildren.map(child => (
-              <TouchableOpacity key={child.id} onPress={() => onDrillDown(child)} style={styles.errorBlock}>
-                <Text style={styles.errorChildName}>✗ {child.label}</Text>
-                {child.error && <Text style={styles.errorText}>{child.error}</Text>}
-                {child.type !== 'test' && <Text style={styles.errorDrillHint}>Tap to see details →</Text>}
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {allConsoleLogs.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
-              Console{isRunning ? ' (live)' : ` (${allConsoleLogs.reduce((n, g) => n + g.logs.length, 0)} entries)`}
-            </Text>
-            <View style={styles.consoleBlock}>
-              {allConsoleLogs.map((group, gi) => (
-                <View key={gi}>
-                  {isGroup && <Text style={styles.consoleGroupName}>{group.testName}:</Text>}
-                  {group.logs.map((entry, li) => (
-                    <Text
-                      key={li}
-                      style={[
-                        styles.consoleEntry,
-                        { color: logColor(entry.level, colors) },
-                        isGroup && styles.consoleEntryIndented,
-                      ]}
-                    >
-                      [{entry.level}] {entry.message}
-                    </Text>
-                  ))}
-                </View>
-              ))}
-            </View>
+            {failedChildren.map(child => {
+              const childIsLeaf = taskKind(child) === 'test';
+              const childError = childIsLeaf ? getTaskFields(child.id)?.error.value : undefined;
+              return (
+                <TouchableOpacity key={child.id} onPress={() => onDrillDown(child)} style={styles.errorBlock}>
+                  <Text style={styles.errorChildName}>✗ {taskLabel(child)}</Text>
+                  {childError && <Text style={styles.errorText}>{childError}</Text>}
+                  {!childIsLeaf && <Text style={styles.errorDrillHint}>Tap to see details →</Text>}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
       </ScrollView>
     </View>
   );
-}
-
-function hasFailedDescendant(node: TestTreeNode): boolean {
-  if (node.status === 'fail') return true;
-  return node.children.some(c => hasFailedDescendant(c));
-}
+});
 
 const createStyles = (colors: Theme['colors']) =>
   StyleSheet.create({
@@ -284,25 +256,5 @@ const createStyles = (colors: Theme['colors']) =>
       fontSize: 11,
       color: colors.textDim,
       marginTop: 4,
-    },
-    consoleBlock: {
-      backgroundColor: colors.bg,
-      borderRadius: 8,
-      padding: 12,
-    },
-    consoleGroupName: {
-      fontSize: 11,
-      color: colors.textDim,
-      fontWeight: '600',
-      marginTop: 4,
-      marginBottom: 2,
-    },
-    consoleEntry: {
-      fontSize: 11,
-      fontFamily: 'monospace',
-      marginBottom: 2,
-    },
-    consoleEntryIndented: {
-      paddingLeft: 8,
     },
   });

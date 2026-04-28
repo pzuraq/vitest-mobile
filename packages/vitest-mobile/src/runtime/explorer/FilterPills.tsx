@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
 import { TouchableOpacity, StyleSheet, View, TextInput } from 'react-native';
 import { useTheme } from '@shopify/restyle';
+import { component } from 'signalium/react';
 import { Text } from './atoms';
 import type { Theme } from './theme';
-import type { StatusFilter } from './types';
+import { searchQuery, statusFilter, type StatusFilter } from '../store';
 
 const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -12,21 +13,19 @@ const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: 'skipped', label: 'Skipped' },
 ];
 
-interface FilterPillsProps {
-  active: StatusFilter;
-  onChange: (filter: StatusFilter) => void;
-}
-
-export function FilterPills({ active, onChange }: FilterPillsProps) {
+export const FilterPills = component(function FilterPills() {
   const { colors } = useTheme<Theme>();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const active = statusFilter.value;
 
   return (
     <View style={styles.row}>
       {FILTERS.map(f => (
         <TouchableOpacity
           key={f.key}
-          onPress={() => onChange(f.key)}
+          onPress={() => {
+            statusFilter.value = f.key;
+          }}
           style={[styles.pill, active === f.key && styles.pillActive]}
         >
           <Text variant="caption" style={[styles.pillText, active === f.key && styles.pillTextActive]}>
@@ -36,16 +35,12 @@ export function FilterPills({ active, onChange }: FilterPillsProps) {
       ))}
     </View>
   );
-}
+});
 
-interface SearchBarProps {
-  value: string;
-  onChangeText: (text: string) => void;
-}
-
-export function SearchBar({ value, onChangeText }: SearchBarProps) {
+export const SearchBar = component(function SearchBar() {
   const { colors } = useTheme<Theme>();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const value = searchQuery.value;
 
   return (
     <View style={styles.searchContainer}>
@@ -54,13 +49,15 @@ export function SearchBar({ value, onChangeText }: SearchBarProps) {
         placeholder="Filter tests..."
         placeholderTextColor={colors.textDim}
         value={value}
-        onChangeText={onChangeText}
+        onChangeText={text => {
+          searchQuery.value = text;
+        }}
         autoCorrect={false}
         autoCapitalize="none"
       />
     </View>
   );
-}
+});
 
 const createStyles = (colors: Theme['colors']) =>
   StyleSheet.create({
