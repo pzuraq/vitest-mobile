@@ -5,6 +5,11 @@
  * the device deterministically from the project path (matches the previous
  * `VitestMobile-<hash>` / `vitest-mobile-<hash>` pattern).
  *
+ * Defaults to an existing device — on iOS the most recently booted
+ * simulator (matching Expo CLI's heuristic), on Android the first
+ * available AVD. "Create new" appears at the end of the list for users
+ * who want a dedicated device.
+ *
  * The result feeds into the device-mapping store; subsequent test runs
  * read that mapping and don't re-prompt.
  *
@@ -15,7 +20,7 @@
  */
 
 import { isCancel, select } from '@clack/prompts';
-import { listAllIOSSimulators, primarySimulatorName } from '../node/device/ios';
+import { getBootedSimulators, listAllIOSSimulators, primarySimulatorName } from '../node/device/ios';
 import { listAllAvds, avdNameForProject, hasAvdProvisioningTools } from '../node/device/android';
 import { getDeviceMapping, setDeviceMapping, type DeviceMapping } from '../node/device/mapping';
 import type { Platform } from '../node/types';
@@ -55,31 +60,32 @@ async function pickIOS(appDir: string, currentChoice?: string): Promise<PickedDe
   const sims = listAllIOSSimulators();
   const projectSim = primarySimulatorName(appDir);
 
+  const existingSims = sims
+    .filter(s => !s.name.startsWith('VitestMobile-') || s.name === projectSim)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(s => ({ value: s.name, label: s.name, hint: s.runtime }));
+
   const options = [
+    ...existingSims,
     {
       value: CREATE_NEW,
       label: `Create new dedicated simulator (${projectSim})`,
-      hint: 'recommended',
     },
-    ...sims
-      // Hide auto-created simulators for *other* projects — they'd be
-      // confusing to pick.
-      .filter(s => !s.name.startsWith('VitestMobile-') || s.name === projectSim)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(s => ({ value: s.name, label: s.name, hint: s.runtime })),
   ];
 
-  // Preference for the pre-selected option:
-  //   1. The currently-mapped device (user's "keep the same" default).
-  //   2. The existing project simulator (for pre-mapping migrations).
-  //   3. Otherwise prompt to create a new one.
-  const projectExists = sims.some(s => s.name === projectSim);
+  // Default to the most recently booted simulator (matches Expo's heuristic),
+  // falling back to the first available simulator, then "Create new" only if
+  // the host has no simulators at all.
+  const booted = getBootedSimulators();
+  const firstBooted = booted.find(b => existingSims.some(s => s.value === b.name));
   const initialValue =
     currentChoice && options.some(o => o.value === currentChoice)
       ? currentChoice
-      : projectExists
-        ? projectSim
-        : CREATE_NEW;
+      : firstBooted
+        ? firstBooted.name
+        : existingSims.length > 0
+          ? existingSims[0]!.value
+          : CREATE_NEW;
 
   const choice = await select({
     message: 'Which simulator should vitest-mobile use for this project?',
@@ -89,8 +95,6 @@ async function pickIOS(appDir: string, currentChoice?: string): Promise<PickedDe
   if (isCancel(choice)) fail('Cancelled.');
 
   if (choice === CREATE_NEW) return { name: projectSim, createdByUs: true };
-  // If the user picked the existing per-project sim, treat as createdByUs=true
-  // so `reset-device` still cleans it up.
   return { name: choice as string, createdByUs: choice === projectSim };
 }
 
@@ -98,35 +102,31 @@ async function pickAndroid(appDir: string, currentChoice?: string): Promise<Pick
   const avds = listAllAvds();
   const projectAvd = avdNameForProject(appDir);
   const canCreate = hasAvdProvisioningTools();
-  const existing = avds.includes(projectAvd);
 
-  const createHint = canCreate ? 'recommended' : 'requires Android cmdline-tools (sdkmanager + avdmanager)';
+  const existingAvds = avds
+    .filter(a => (!a.startsWith('vitest-mobile-') && a !== 'vitest-mobile') || a === projectAvd)
+    .sort()
+    .map(a => ({ value: a, label: a }));
+
+  const createHint = canCreate ? undefined : 'requires Android cmdline-tools (sdkmanager + avdmanager)';
 
   const options = [
+    ...existingAvds,
     {
       value: CREATE_NEW,
       label: `Create new dedicated AVD (${projectAvd})`,
       hint: createHint,
     },
-    ...avds
-      .filter(a => (!a.startsWith('vitest-mobile-') && a !== 'vitest-mobile') || a === projectAvd)
-      .sort()
-      .map(a => ({ value: a, label: a })),
   ];
 
-  // Preference for the pre-selected option:
-  //   1. Currently-mapped device (user's "keep the same" default).
-  //   2. Existing project AVD.
-  //   3. "Create new" when we can actually create one.
-  //   4. First existing AVD otherwise.
+  // Default to the first existing AVD (matches the "use what you already have"
+  // convention), falling back to "Create new" only if no AVDs exist.
   const initialValue =
     currentChoice && options.some(o => o.value === currentChoice)
       ? currentChoice
-      : existing
-        ? projectAvd
-        : canCreate
-          ? CREATE_NEW
-          : (avds[0] ?? CREATE_NEW);
+      : existingAvds.length > 0
+        ? existingAvds[0]!.value
+        : CREATE_NEW;
 
   const choice = await select({
     message: 'Which AVD should vitest-mobile use for this project?',

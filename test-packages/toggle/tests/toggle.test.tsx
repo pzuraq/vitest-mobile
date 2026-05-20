@@ -1,11 +1,7 @@
 import React from 'react';
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, cleanup, waitFor } from 'vitest-mobile/runtime';
+import { describe, it, expect } from 'vitest';
+import { render, waitFor } from 'vitest-mobile/runtime';
 import { ToggleModule } from '../ToggleModule';
-
-afterEach(async () => {
-  await cleanup();
-});
 
 describe('ToggleModule', () => {
   it('renders in off state by default', async () => {

@@ -1,11 +1,7 @@
 import React from 'react';
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, cleanup } from 'vitest-mobile/runtime';
+import { describe, it, expect } from 'vitest';
+import { render } from 'vitest-mobile/runtime';
 import { TodoListModule } from '../TodoListModule';
-
-afterEach(async () => {
-  await cleanup();
-});
 
 describe('TodoListModule', () => {
   it('shows empty message when no items', async () => {

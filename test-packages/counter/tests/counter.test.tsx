@@ -1,11 +1,7 @@
 import React from 'react';
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, cleanup, waitFor } from 'vitest-mobile/runtime';
+import { describe, it, expect } from 'vitest';
+import { render, waitFor } from 'vitest-mobile/runtime';
 import { CounterModule } from '../CounterModule';
-
-afterEach(async () => {
-  await cleanup();
-});
 
 describe('CounterModule', () => {
   it('renders initial count of zero', async () => {

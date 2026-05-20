@@ -142,7 +142,7 @@ export function getBootedSimulator(): string | null {
   return info?.udid ?? null;
 }
 
-function getBootedSimulators(excludeIds: string[] = []): SimulatorInfo[] {
+export function getBootedSimulators(excludeIds: string[] = []): SimulatorInfo[] {
   const json = run('xcrun simctl list devices booted -j');
   if (!json) return [];
   const devices = parseSimctlDevicesJson(json);

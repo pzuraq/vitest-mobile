@@ -1,11 +1,7 @@
 import React from 'react';
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, cleanup } from 'vitest-mobile/runtime';
+import { describe, it, expect } from 'vitest';
+import { render } from 'vitest-mobile/runtime';
 import { GreetingModule } from '../GreetingModule';
-
-afterEach(async () => {
-  await cleanup();
-});
 
 describe('GreetingModule', () => {
   it('shows placeholder when no name is entered', async () => {
