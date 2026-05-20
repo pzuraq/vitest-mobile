@@ -66,19 +66,24 @@ export interface SpinnerOptions {
   initialMessage: string;
   /** Message shown on successful completion. Defaults to "${command} complete." */
   successMessage?: string;
+  /** Force plain-text output instead of a spinner (--verbose). */
+  verbose?: boolean;
 }
 
 export async function withSpinner<T>(opts: SpinnerOptions, fn: (ctx: SpinnerContext) => Promise<T>): Promise<T> {
   const logPath = makeLogPath(opts);
   const logStream = createWriteStream(logPath, { flags: 'a' });
   logStream.write(`# ${opts.command}${opts.platform ? ` (${opts.platform})` : ''} — ${new Date().toISOString()}\n\n`);
-  setLogSink(logStream);
 
-  const isTTY = Boolean(process.stdout.isTTY);
+  const useSpinner = !opts.verbose && Boolean(process.stdout.isTTY);
+
+  // Only redirect logger output to the log sink when the spinner is active.
+  // In verbose mode, logger output stays on stdout alongside child output.
+  if (useSpinner) setLogSink(logStream);
 
   const success = opts.successMessage ?? `${opts.command} complete.`;
 
-  if (!isTTY) {
+  if (!useSpinner) {
     console.log(`${opts.initialMessage}`);
     const update = (msg: string) => console.log(msg);
     activeUpdate = update;

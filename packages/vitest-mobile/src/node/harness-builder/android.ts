@@ -46,17 +46,13 @@ export async function buildAndroid(projectDir: string, buildDir: string): Promis
   log.info('Building Android debug APK (this may take a few minutes)...');
   const gradleStart = Date.now();
 
-  // Use the gradle wrapper from the scaffolded project
   const gradlew = resolve(androidDir, 'gradlew');
   if (!existsSync(gradlew)) {
     throw new Error('gradlew not found in Android project');
   }
-
   run(`chmod +x "${gradlew}"`, { cwd: androidDir });
-  // runLive keeps the spinner animating + lets SIGINT reach this process.
-  // run() would block the event loop for the entire multi-minute gradle run.
   await runLive(`"${gradlew}" assembleDebug -x lint --no-daemon`, { cwd: androidDir });
-  log.info(`  Gradle build complete (${((Date.now() - gradleStart) / 1000).toFixed(1)}s)`);
+  log.info(`  Android build complete (${((Date.now() - gradleStart) / 1000).toFixed(1)}s)`);
 
   const apkPath = resolve(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
   if (!existsSync(apkPath)) {

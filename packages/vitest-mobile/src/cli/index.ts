@@ -28,33 +28,48 @@ cli
   .option('--platform <platform>', 'ios or android (prompts if omitted in TTY)')
   .option('--app-dir <dir>', 'App directory', { default: '.' })
   .option('--force', 'Force rebuild (clear cache)')
+  .option('--verbose', 'Stream child-process output to stdout instead of using a spinner')
   .option('--native-modules <modules>', 'Comma-separated list of react-native native modules (overrides vitest config)')
-  .action(async (options: { platform?: string; appDir: string; force: boolean; nativeModules?: string }) => {
-    rejectLegacyPositional(cli.args);
-    const platform = (await resolvePlatformInteractive(options.platform, {
-      command: 'build',
-    })) as Platform;
-    const { build } = await import('./build');
-    const appDir = resolve(process.cwd(), options.appDir);
-    const nativeModules = await resolveNativeModules(options.nativeModules, appDir, [platform]);
-    await withSpinner(
-      { command: 'build', platform, initialMessage: `Building ${platform} harness binary…` },
-      async () => {
-        await build(platform, {
-          appDir: options.appDir,
-          force: options.force,
-          nativeModules,
-        });
-      },
-    );
-  });
+  .action(
+    async (options: {
+      platform?: string;
+      appDir: string;
+      force: boolean;
+      verbose?: boolean;
+      nativeModules?: string;
+    }) => {
+      rejectLegacyPositional(cli.args);
+      const platform = (await resolvePlatformInteractive(options.platform, {
+        command: 'build',
+      })) as Platform;
+      const { build } = await import('./build');
+      const appDir = resolve(process.cwd(), options.appDir);
+      const nativeModules = await resolveNativeModules(options.nativeModules, appDir, [platform]);
+      await withSpinner(
+        {
+          command: 'build',
+          platform,
+          initialMessage: `Building ${platform} harness binary…`,
+          verbose: options.verbose,
+        },
+        async () => {
+          await build(platform, {
+            appDir: options.appDir,
+            force: options.force,
+            nativeModules,
+          });
+        },
+      );
+    },
+  );
 
 cli
   .command('install', 'Install harness binary on device')
   .option('--platform <platform>', 'ios or android (inferred from cached builds if omitted)')
   .option('--app-dir <dir>', 'App directory', { default: '.' })
+  .option('--verbose', 'Stream child-process output to stdout instead of using a spinner')
   .option('--native-modules <modules>', 'Comma-separated list of react-native native modules (overrides vitest config)')
-  .action(async (options: { platform?: string; appDir: string; nativeModules?: string }) => {
+  .action(async (options: { platform?: string; appDir: string; verbose?: boolean; nativeModules?: string }) => {
     rejectLegacyPositional(cli.args);
     const platform = (await resolvePlatformFromCache(options.platform, {
       command: 'install',
@@ -63,7 +78,12 @@ cli
     const appDir = resolve(process.cwd(), options.appDir);
     const nativeModules = await resolveNativeModules(options.nativeModules, appDir, [platform]);
     await withSpinner(
-      { command: 'install', platform, initialMessage: `Installing ${platform} harness binary…` },
+      {
+        command: 'install',
+        platform,
+        initialMessage: `Installing ${platform} harness binary…`,
+        verbose: options.verbose,
+      },
       async () => {
         await install(platform, {
           appDir: options.appDir,
@@ -81,6 +101,7 @@ cli
   .option('--headless', 'Run without GUI — enables snapshot save/restore and cache trimming (for CI)')
   .option('--api-level <level>', 'Android API level — auto-installs system image + creates AVD if needed')
   .option('--device <name>', 'Simulator/AVD name to use (skips interactive picker)')
+  .option('--verbose', 'Stream child-process output to stdout instead of using a spinner')
   .option('--native-modules <modules>', 'Comma-separated list of react-native native modules (overrides vitest config)')
   .action(
     async (options: {
@@ -90,6 +111,7 @@ cli
       headless?: boolean;
       apiLevel?: string;
       device?: string;
+      verbose?: boolean;
       nativeModules?: string;
     }) => {
       rejectLegacyPositional(cli.args);
@@ -108,7 +130,12 @@ cli
       await ensureDeviceMapping({ platform, appDir, deviceFlag: options.device, alwaysPrompt: true });
 
       await withSpinner(
-        { command: 'bootstrap', platform, initialMessage: `Bootstrapping ${platform} harness…` },
+        {
+          command: 'bootstrap',
+          platform,
+          initialMessage: `Bootstrapping ${platform} harness…`,
+          verbose: options.verbose,
+        },
         async () => {
           await bootstrap(platform, {
             appDir: options.appDir,
@@ -131,6 +158,7 @@ cli
   .option('--include <patterns>', 'Test file glob patterns (comma-separated, overrides vitest config)')
   .option('--config <path>', 'Path to vitest config file')
   .option('--no-dev', 'Build in production mode (minified)')
+  .option('--verbose', 'Stream child-process output to stdout instead of using a spinner')
   .option('--native-modules <modules>', 'Comma-separated list of react-native native modules (overrides vitest config)')
   .action(
     async (options: {
@@ -141,6 +169,7 @@ cli
       include?: string;
       config?: string;
       dev: boolean;
+      verbose?: boolean;
       nativeModules?: string;
     }) => {
       rejectLegacyPositional(cli.args);
@@ -163,6 +192,7 @@ cli
           command: 'bundle',
           platform: choice === 'both' ? undefined : choice,
           initialMessage: `Bundling JS for ${choice === 'both' ? 'ios + android' : choice}…`,
+          verbose: options.verbose,
         },
         async () => {
           await buildBundle({
@@ -190,6 +220,7 @@ cli
   .option('--headless', 'Run without GUI (for CI)')
   .option('--api-level <level>', 'Android API level — auto-installs system image + creates AVD if needed')
   .option('--device <name>', 'Simulator/AVD name to use (skips interactive picker)')
+  .option('--verbose', 'Stream child-process output to stdout instead of using a spinner')
   .action(
     async (options: {
       platform?: string;
@@ -198,6 +229,7 @@ cli
       headless?: boolean;
       apiLevel?: string;
       device?: string;
+      verbose?: boolean;
     }) => {
       rejectLegacyPositional(cli.args);
       const platform = (await resolvePlatformInteractive(options.platform, {
@@ -208,7 +240,7 @@ cli
       const appDir = process.cwd();
       await ensureDeviceMapping({ platform, appDir, deviceFlag: options.device });
       await withSpinner(
-        { command: 'boot-device', platform, initialMessage: `Booting ${platform} device…` },
+        { command: 'boot-device', platform, initialMessage: `Booting ${platform} device…`, verbose: options.verbose },
         async () => {
           await ensureDevice(
             platform,
