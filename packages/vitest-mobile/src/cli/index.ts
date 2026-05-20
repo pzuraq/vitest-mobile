@@ -281,6 +281,7 @@ cli
       reactNativeVersion: rnVersion,
       nativeModules,
       packageRoot,
+      projectRoot: appDir,
     });
     process.stdout.write(key);
   });

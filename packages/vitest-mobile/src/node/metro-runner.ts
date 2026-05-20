@@ -483,7 +483,13 @@ export async function buildBundle(options: BuildBundleOptions): Promise<BundleMa
   for (const platform of platforms) {
     log.info(`Bundling for ${platform}...`);
 
-    const harnessResult = findHarnessBinary({ platform, reactNativeVersion: rnVersion, nativeModules, packageRoot });
+    const harnessResult = findHarnessBinary({
+      platform,
+      reactNativeVersion: rnVersion,
+      nativeModules,
+      packageRoot,
+      projectRoot,
+    });
     if (!harnessResult) {
       throw new Error(
         `No harness binary found for ${platform}. Build it first:\n\n` + `  npx vitest-mobile bootstrap ${platform}\n`,
@@ -584,6 +590,15 @@ async function loadMetroConfig(
  *
  * User code imports that aren't in the allow-list go through Metro's
  * default resolver against `projectRoot` unchanged.
+ *
+ * The `vitest-stubs/` lookup anchors at `projectRoot`, not at the harness:
+ * the cached harness's `node_modules/vitest-mobile` is a `file:`-installed
+ * symlink to whichever workspace first built the cache, and a second
+ * workspace sharing that cache would otherwise see Metro fail to find
+ * the stubs (target lives outside `projectRoot` + `watchFolders` →
+ * Metro's file map doesn't track it). The cache key includes the
+ * vitest-mobile version, so the workspace's stubs are guaranteed to
+ * match the harness's on every run.
  */
 function buildGeneratedMetroConfig(opts: { projectRoot: string; harnessProjectDir: string }): string {
   return renderNodeTemplate('metro.config.cjs', {

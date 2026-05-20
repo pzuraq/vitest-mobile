@@ -66,7 +66,10 @@ const BUILTIN_NATIVE_DEPS = ['react-native-safe-area-context'];
  * Does NOT build — callers should direct users to run `npx vitest-mobile bootstrap`.
  */
 export function findHarnessBinary(
-  options: Pick<HarnessBuildOptions, 'platform' | 'reactNativeVersion' | 'nativeModules' | 'packageRoot'>,
+  options: Pick<
+    HarnessBuildOptions,
+    'platform' | 'reactNativeVersion' | 'nativeModules' | 'packageRoot' | 'projectRoot'
+  >,
 ): HarnessBuildResult | null {
   const cacheDir = getCacheDir();
   const cacheKey = computeCacheKey(options);
@@ -130,6 +133,7 @@ export function resolveHarness(
     reactNativeVersion: rnVersion,
     nativeModules: harness.nativeModules,
     packageRoot,
+    projectRoot: internal.appDir,
   });
   if (!result) {
     throw new Error(
@@ -303,15 +307,23 @@ export function trimBuildCache(options: { platform: Platform }): {
  * Compute the deterministic cache key for a harness build configuration.
  * Platform-independent — the same scaffolded project is shared between iOS
  * and Android, with only the native build step being platform-specific.
+ *
+ * Includes the installed version of each native module so the harness is
+ * rebuilt when a dependency version changes (e.g. worklets 0.6 → 0.8).
  */
 export function computeCacheKey(
-  options: Pick<HarnessBuildOptions, 'reactNativeVersion' | 'nativeModules' | 'packageRoot'>,
+  options: Pick<HarnessBuildOptions, 'reactNativeVersion' | 'nativeModules' | 'packageRoot' | 'projectRoot'>,
 ): string {
+  const sortedModules = options.nativeModules.slice().sort();
+  const moduleVersions = sortedModules.map(mod => {
+    const v = readInstalledVersion(options.projectRoot, mod);
+    return `${mod}@${v ?? 'unknown'}`;
+  });
   const parts = [
     `fmt${BUILD_FORMAT_VERSION}`,
     options.reactNativeVersion,
     ...BUILTIN_NATIVE_DEPS,
-    ...options.nativeModules.sort(),
+    ...moduleVersions,
     getHarnessVersion(options.packageRoot),
   ];
   return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 24);

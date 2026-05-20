@@ -13,6 +13,15 @@ intercept — and derives each one's on-disk path by splitting the module
 specifier on `:` and `/`, then checks if a dedicated stub file exists at
 that path. If yes, use it; if no, fall back to `empty.js`.
 
+The lookup anchors at the active workspace's `node_modules/vitest-mobile/`
+(NOT at the cached harness's). The harness's `vitest-mobile` is installed
+via `file:` (a symlink to the workspace that first built the cache); two
+workspaces sharing a cache key would otherwise have the second one's
+Metro resolve `STUBS_DIR` to a path outside its `projectRoot` and
+`watchFolders`, failing with "Failed to get the SHA-1 for: …/empty.js".
+The cache key includes the vitest-mobile version, so the workspace's
+stubs are guaranteed to match the harness's on every run.
+
 ```
 node:fs            -> stubs/node/fs.js
 node:fs/promises   -> stubs/node/fs/promises.js

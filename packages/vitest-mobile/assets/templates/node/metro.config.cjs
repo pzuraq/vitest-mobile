@@ -32,7 +32,21 @@ const { getDefaultConfig } = harnessReq('@react-native/metro-config');
 // exports). Adding a new no-op stub is therefore a one-line change —
 // just append the module name here. See
 // packages/vitest-mobile/src/metro/vitest-stubs/README.md.
-const VITEST_MOBILE_ROOT = path.dirname(harnessReq.resolve('vitest-mobile/package.json'));
+//
+// Anchor the stubs lookup at PROJECT_ROOT, NOT at HARNESS_DIR. The cached
+// harness's `node_modules/vitest-mobile` is a `file:`-installed symlink
+// pointing at whichever workspace first built the cache — when a second
+// workspace shares the cache (same RN version, same native modules, same
+// vitest-mobile version → same cache key), following that symlink lands
+// `STUBS_DIR` outside Metro's projectRoot + watchFolders, and the resolver
+// fails with "Failed to get the SHA-1 for: …/empty.js" because the file
+// isn't in Metro's in-memory file map. Resolving from PROJECT_ROOT keeps
+// the stubs inside the active workspace's tree where Metro can see them,
+// and is safe because the cache key includes the vitest-mobile version
+// (`getHarnessVersion(options.packageRoot)`) — the workspace's stubs are
+// guaranteed to match the harness's vitest-mobile version on every run.
+const projectReq = createRequire(path.join(PROJECT_ROOT, 'package.json'));
+const VITEST_MOBILE_ROOT = path.dirname(projectReq.resolve('vitest-mobile/package.json'));
 const STUBS_DIR = path.join(VITEST_MOBILE_ROOT, 'src', 'metro', 'vitest-stubs');
 const EMPTY_STUB = path.join(STUBS_DIR, 'empty.js');
 const STUBBED_MODULES = new Set([
