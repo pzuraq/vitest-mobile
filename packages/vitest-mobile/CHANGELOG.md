@@ -1,5 +1,79 @@
 # vitest-mobile
 
+## 0.4.0
+
+### Minor Changes
+
+- be23517: Fix component hot reload during `pause()` and improve build robustness.
+
+  **HMR fix:** Editing a component file while paused previously triggered a full
+  app reload instead of a live Fast Refresh update. The root cause was twofold:
+  1. Components loaded with `__ReactRefresh` disabled had no family registrations,
+     so `performReactRefresh()` couldn't map old→new component types.
+  2. Restoring the real Refresh runtime during pause caused Metro to detect a
+     boundary status change ("invalidated boundary") and call
+     `performFullRefresh()`.
+
+  The fix installs a registration-only shim that builds component families from
+  initial load (forwarding `register()`) while preventing implicit self-accept
+  (`isLikelyComponentType()` → false). During pause, `performFullRefresh()` is
+  suppressed and `performReactRefresh()` is triggered manually.
+
+  **Build improvements:**
+  - Use `npx react-native build-ios` / `build-android` instead of raw
+    xcodebuild/gradlew — simplifies the build step and lets RN CLI handle
+    pod install, gem setup, and gradle wrapper automatically.
+  - Detect and recover from stale build locks (killed/interrupted builds no
+    longer block subsequent runs indefinitely).
+  - Clean incomplete binaries and DerivedData before rebuilding.
+  - Add `--verbose` flag to all CLI commands (streams child-process output
+    instead of using a spinner).
+
+### Patch Changes
+
+- 2035ecc: Anchor the generated Metro config's `vitest-stubs/` lookup at the active
+  workspace's `node_modules/vitest-mobile/` instead of the cached harness's.
+
+  The cached harness's `node_modules/vitest-mobile` is installed via `file:`,
+  so npm creates a symlink to whichever workspace first built the cache.
+  Two workspaces with the same RN version + native modules + vitest-mobile
+  version share a cache key, and the second one would hit Metro errors like
+
+  ```
+  Failed to get the SHA-1 for: <other-workspace>/node_modules/vitest-mobile/src/metro/vitest-stubs/empty.js.
+    Potential causes:
+      1) The file is not watched. Ensure it is under the configured `projectRoot` or `watchFolders`.
+  ```
+
+  — because the symlink target lives outside the second workspace's
+  `projectRoot` and `watchFolders`, so Metro's file map doesn't track it.
+
+  Resolving the stubs from `projectRoot` instead is safe: `computeCacheKey`
+  already includes the vitest-mobile package version, so the workspace's
+  stubs are guaranteed to match the harness's on every run. The fix is
+  template-only — existing cached harness binaries continue to work
+  unchanged, no rebuild required.
+
+  Unblocks running tests from multiple checkouts of the same repo (and
+  fixes CI tarball-restore scenarios where the originating workspace
+  isn't present on the runner).
+
+- a3eeb10: Default the device picker to an existing simulator/AVD instead of "Create new"
+
+  The interactive device picker (used by `bootstrap` and `boot-device`) now
+  defaults to an existing device rather than prompting to create a dedicated
+  one. On iOS the pre-selected device is the most recently booted simulator,
+  matching Expo CLI's heuristic; on Android it's the first available AVD.
+
+  "Create new dedicated simulator/AVD" is still available at the bottom of
+  the list for users who want isolation. The non-interactive (CI) fallback
+  is unchanged — it still auto-creates a project-scoped device.
+
+  This prevents vitest-mobile from stealing Expo CLI's default simulator:
+  previously, creating and booting a `VitestMobile-*` sim made it macOS
+  Simulator.app's "most recently used" device, so Expo would target it
+  on the next `expo start` → `i` press.
+
 ## 0.3.1
 
 ### Patch Changes
