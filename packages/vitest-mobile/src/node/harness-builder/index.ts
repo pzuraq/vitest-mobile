@@ -176,18 +176,27 @@ export async function ensureHarnessBinary(options: HarnessBuildOptions): Promise
   try {
     writeFileSync(lockPath, String(process.pid), { flag: 'wx' }); // fails if exists
   } catch {
-    // Another worker is building — wait for it
-    log.info('Another worker is building the harness binary, waiting...');
-    for (let i = 0; i < 600; i++) {
-      // up to 10 minutes
-      await new Promise<void>(r => setTimeout(r, 1000));
-      if (existsSync(binaryPath)) {
-        log.info('Harness binary ready (built by another worker).');
-        return { binaryPath, bundleId: HARNESS_BUNDLE_ID, cached: true, cacheKey, projectDir };
+    // Lock file exists — check if the holding process is still alive.
+    // A stale lock from a killed/interrupted build would block forever.
+    const stalePid = parseInt(readFileSync(lockPath, 'utf8').trim(), 10);
+    if (Number.isNaN(stalePid) || !isProcessAlive(stalePid)) {
+      log.info('Removing stale build lock from a previously interrupted build…');
+      rmSync(lockPath, { force: true });
+      writeFileSync(lockPath, String(process.pid), { flag: 'wx' });
+    } else {
+      // Another worker is genuinely building — wait for it
+      log.info('Another worker is building the harness binary, waiting...');
+      for (let i = 0; i < 600; i++) {
+        // up to 10 minutes
+        await new Promise<void>(r => setTimeout(r, 1000));
+        if (existsSync(binaryPath) && isBinaryValid(binaryPath, options.platform)) {
+          log.info('Harness binary ready (built by another worker).');
+          return { binaryPath, bundleId: HARNESS_BUNDLE_ID, cached: true, cacheKey, projectDir };
+        }
+        if (!existsSync(lockPath)) break; // lock removed = build failed
       }
-      if (!existsSync(lockPath)) break; // lock removed = build failed
+      throw new Error('Timed out waiting for harness binary build');
     }
-    throw new Error('Timed out waiting for harness binary build');
   }
 
   try {
@@ -211,6 +220,22 @@ export async function ensureHarnessBinary(options: HarnessBuildOptions): Promise
       log.info('Using cached project (scaffold + customization already done)');
     }
 
+    // Clean build intermediates that may be left over from a previously
+    // interrupted build (locked build.db, incomplete .app, etc.). We always
+    // clean DerivedData / build dirs when we're about to rebuild — the only
+    // path that skips this is the cache-hit early return above.
+    if (existsSync(binaryPath) && !isBinaryValid(binaryPath, options.platform)) {
+      log.info('Removing incomplete binary from a previously interrupted build…');
+      rmSync(binaryPath, { recursive: true, force: true });
+    }
+    if (options.platform === 'ios') {
+      const derivedData = resolve(projectDir, 'ios', 'DerivedData');
+      if (existsSync(derivedData)) {
+        log.info('Cleaning iOS DerivedData…');
+        rmSync(derivedData, { recursive: true, force: true });
+      }
+    }
+
     log.info(`Building ${options.platform} binary (this may take a few minutes)...`);
     if (options.platform === 'ios') {
       await buildIOS(projectDir);
@@ -218,8 +243,8 @@ export async function ensureHarnessBinary(options: HarnessBuildOptions): Promise
       await buildAndroid(projectDir, buildDir);
     }
 
-    if (!existsSync(binaryPath)) {
-      throw new Error(`Build completed but binary not found at: ${binaryPath}`);
+    if (!existsSync(binaryPath) || !isBinaryValid(binaryPath, options.platform)) {
+      throw new Error(`Build completed but binary not found or invalid at: ${binaryPath}`);
     }
 
     const totalElapsed = ((Date.now() - buildStart) / 1000).toFixed(1);
@@ -330,6 +355,15 @@ export function computeCacheKey(
 }
 
 // ── Internals ──────────────────────────────────────────────────────
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function getHarnessVersion(packageRoot: string): string {
   try {

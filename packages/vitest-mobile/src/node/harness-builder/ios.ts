@@ -69,31 +69,18 @@ export async function buildIOS(projectDir: string): Promise<void> {
 
   const iosDir = resolve(projectDir, 'ios');
 
-  // Install gems + pods (bundle exec ensures compatible CocoaPods version)
-  log.info('Installing Ruby gems...');
-  let stepStart = Date.now();
-  await runLive('bundle install', { cwd: projectDir });
-  log.info(`  Gems installed (${((Date.now() - stepStart) / 1000).toFixed(1)}s)`);
-
-  log.info('Running pod install... (this may take a minute)');
-  stepStart = Date.now();
-  await runLive('bundle exec pod install', { cwd: iosDir });
-  log.info(`  Pods installed (${((Date.now() - stepStart) / 1000).toFixed(1)}s)`);
-
   log.info('Building for iOS simulator (this may take a few minutes)...');
-  stepStart = Date.now();
+  const stepStart = Date.now();
 
   const buildCmd = [
-    'xcodebuild build',
-    `-workspace ${HARNESS_APP_NAME}.xcworkspace`,
-    `-scheme ${HARNESS_APP_NAME}`,
-    '-sdk iphonesimulator',
-    '-configuration Debug',
-    `-derivedDataPath "${resolve(iosDir, 'DerivedData')}"`,
+    'npx react-native build-ios',
+    `--scheme ${HARNESS_APP_NAME}`,
+    '--mode Debug',
+    `--buildFolder "${resolve(iosDir, 'DerivedData')}"`,
   ].join(' ');
 
-  await runLive(buildCmd, { cwd: iosDir });
-  log.info(`  Xcode build complete (${((Date.now() - stepStart) / 1000).toFixed(1)}s)`);
+  await runLive(buildCmd, { cwd: projectDir });
+  log.info(`  iOS build complete (${((Date.now() - stepStart) / 1000).toFixed(1)}s)`);
 
   const appPath = resolve(
     iosDir,
@@ -103,8 +90,11 @@ export async function buildIOS(projectDir: string): Promise<void> {
     'Debug-iphonesimulator',
     `${HARNESS_APP_NAME}.app`,
   );
-  if (!existsSync(appPath)) {
-    throw new Error(`Build succeeded but .app not found at: ${appPath}`);
+  if (!existsSync(appPath) || !isIOSBinaryValid(appPath)) {
+    throw new Error(
+      `Build completed but produced an invalid .app at: ${appPath}\n` +
+        'Try running with --force to clear the cache and rebuild from scratch.',
+    );
   }
   log.info(`Binary built: ${appPath}`);
 }

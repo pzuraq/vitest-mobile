@@ -55,23 +55,76 @@ export function getErrorMessage(err: unknown): string {
 // ── React Fast Refresh toggle ────────────────────────────────────
 //
 // Metro's require polyfill checks global[prefix + '__ReactRefresh'] on every
-// HMR update. When non-null, React Refresh boundaries intercept updates and
-// prevent propagation to parent modules (test files). By nulling it out, HMR
-// updates propagate through the normal module.hot.accept()/dispose() chain,
-// reaching test files and triggering reruns.
+// module evaluation. When non-null AND isLikelyComponentType() returns true,
+// Metro adds an implicit module.hot.accept() — making the component module a
+// "hot boundary" that prevents HMR propagation to parent modules (test files).
 //
-// During pause(), we restore it so component edits render live.
+// We need two modes:
+//   Normal (not paused): HMR updates bubble to test files → trigger reruns.
+//   Paused: Fast Refresh captures updates in-place → live component editing.
+//
+// Three mechanisms work together:
+//
+// 1. Registration-only shim — keeps __ReactRefresh truthy so Metro's module
+//    wrappers call $RefreshReg$() from initial load, building component families.
+//    But isLikelyComponentType() returns false → no implicit self-accept → HMR
+//    bubbles to test files during normal runs.
+//
+// 2. performFullRefresh suppression — when we swap to the real Refresh during
+//    pause, Metro detects "invalidated boundary" (module wasn't a boundary
+//    before, now it is) and calls performFullRefresh(). We suppress this.
+//
+// 3. Manual performReactRefresh() — after suppressing the full reload, we
+//    trigger the component swap ourselves since Metro's normal path was
+//    short-circuited.
 
 const gRecord = globalThis as unknown as Record<string, unknown>;
 const REFRESH_KEY = ((gRecord.__METRO_GLOBAL_PREFIX__ as string) ?? '') + '__ReactRefresh';
 const _savedReactRefresh = gRecord[REFRESH_KEY];
+const _typedRefresh = _savedReactRefresh as Record<string, (...args: unknown[]) => unknown> | null;
 
-gRecord[REFRESH_KEY] = null;
+const _origPerformFullRefresh = _typedRefresh?.performFullRefresh;
+let _suppressFullRefresh = false;
+if (_typedRefresh && _origPerformFullRefresh) {
+  _typedRefresh.performFullRefresh = (...args: unknown[]) => {
+    if (_suppressFullRefresh) {
+      try {
+        _typedRefresh.performReactRefresh();
+      } catch {
+        /* best-effort */
+      }
+      return;
+    }
+    return _origPerformFullRefresh.apply(_typedRefresh, args);
+  };
+}
+
+const _registrationOnlyRefresh: Record<string, unknown> | null = _typedRefresh
+  ? {
+      register: (...args: unknown[]) => _typedRefresh.register(...args),
+      createSignatureFunctionForTransform: (...args: unknown[]) =>
+        _typedRefresh.createSignatureFunctionForTransform(...args),
+      setSignature: _typedRefresh.setSignature
+        ? (...args: unknown[]) => _typedRefresh.setSignature!(...args)
+        : undefined,
+      getFamilyByType: (...args: unknown[]) => _typedRefresh.getFamilyByType?.(...args),
+      getFamilyByID: _typedRefresh.getFamilyByID
+        ? (...args: unknown[]) => _typedRefresh.getFamilyByID!(...args)
+        : undefined,
+      isLikelyComponentType: () => false,
+      performReactRefresh: () => {},
+      performFullRefresh: _typedRefresh.performFullRefresh,
+    }
+  : null;
+
+gRecord[REFRESH_KEY] = _registrationOnlyRefresh;
 
 export function enableFastRefresh(): void {
+  _suppressFullRefresh = true;
   gRecord[REFRESH_KEY] = _savedReactRefresh;
 }
 
 export function disableFastRefresh(): void {
-  gRecord[REFRESH_KEY] = null;
+  _suppressFullRefresh = false;
+  gRecord[REFRESH_KEY] = _registrationOnlyRefresh;
 }
