@@ -396,7 +396,7 @@ async function scaffoldProject(buildDir: string, options: HarnessBuildOptions): 
   // runLive (async when a log sink is active) keeps the spinner animating
   // during this ~30s operation; run() would block the event loop sync.
   await runLive(
-    `npx @react-native-community/cli init ${HARNESS_APP_NAME} --version ${options.reactNativeVersion} --skip-install --skip-git-init`,
+    `npx --yes @react-native-community/cli init ${HARNESS_APP_NAME} --version ${options.reactNativeVersion} --skip-install --skip-git-init`,
     { cwd: buildDir },
   );
 

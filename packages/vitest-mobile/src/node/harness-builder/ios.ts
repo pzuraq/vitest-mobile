@@ -72,10 +72,16 @@ export async function buildIOS(projectDir: string): Promise<void> {
   log.info('Building for iOS simulator (this may take a few minutes)...');
   const stepStart = Date.now();
 
+  // --force-pods is required: without it, the CLI only runs `pod install`
+  // when `react-native.config.js` sets `automaticPodsInstallation: true`
+  // (the bare RN init template does not). Skipping pod install causes
+  // xcodebuild to fail with "Unable to load contents of file list" against
+  // the Pods xcfilelists.
   const buildCmd = [
-    'npx react-native build-ios',
+    'npx --yes react-native build-ios',
     `--scheme ${HARNESS_APP_NAME}`,
     '--mode Debug',
+    '--force-pods',
     `--buildFolder "${resolve(iosDir, 'DerivedData')}"`,
   ].join(' ');
 

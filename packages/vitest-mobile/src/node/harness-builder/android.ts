@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { resolve } from 'node:path';
 import { log } from '../logger';
 import { applyTemplateTree, fillFilePlaceholders } from '../templates';
-import { HARNESS_APP_NAME, HARNESS_BUNDLE_ID, run, runLive } from './_shared';
+import { HARNESS_APP_NAME, HARNESS_BUNDLE_ID, runLive } from './_shared';
 
 export function getAndroidBinaryPath(buildDir: string): string {
   return resolve(buildDir, 'build', `${HARNESS_APP_NAME}.apk`);
@@ -46,12 +46,14 @@ export async function buildAndroid(projectDir: string, buildDir: string): Promis
   log.info('Building Android debug APK (this may take a few minutes)...');
   const gradleStart = Date.now();
 
-  const gradlew = resolve(androidDir, 'gradlew');
-  if (!existsSync(gradlew)) {
-    throw new Error('gradlew not found in Android project');
-  }
-  run(`chmod +x "${gradlew}"`, { cwd: androidDir });
-  await runLive(`"${gradlew}" assembleDebug -x lint --no-daemon`, { cwd: androidDir });
+  // Pass --tasks assembleDebug explicitly: `react-native build-android`
+  // defaults its task prefix to 'bundle' (producing an AAB), not 'assemble'
+  // (producing an APK). The CLI's --help is misleading on this point.
+  // Note: the CLI auto-prepends `app:` to each task name, so we pass the
+  // bare task name (passing `app:assembleDebug` would yield `app:app:...`).
+  await runLive('npx --yes react-native build-android --tasks assembleDebug --extra-params "-x lint --no-daemon"', {
+    cwd: projectDir,
+  });
   log.info(`  Android build complete (${((Date.now() - gradleStart) / 1000).toFixed(1)}s)`);
 
   const apkPath = resolve(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
