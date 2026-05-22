@@ -4,7 +4,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { log } from '../logger';
 import { applyTemplateTree, fillFilePlaceholders } from '../templates';
@@ -52,6 +52,8 @@ export function customizeIOS(projectDir: string, cacheKey: string): void {
 
   updateIOSBundleId(projectDir);
 
+  seedNewArchSnifferBait(iosDir);
+
   // PlistBuddy is macOS-only; skip on Linux (Android-only CI runners still
   // customize both platforms for the shared project, but only build one).
   if (process.platform === 'darwin') {
@@ -77,6 +79,10 @@ export async function buildIOS(projectDir: string): Promise<void> {
   // (the bare RN init template does not). Skipping pod install causes
   // xcodebuild to fail with "Unable to load contents of file list" against
   // the Pods xcfilelists.
+  //
+  // For why `customizeIOS` pre-seeds a sniffer-bait pbxproj instead of us
+  // running pod install ourselves with the right env, see
+  // `seedNewArchSnifferBait` below.
   const buildCmd = [
     'npx --yes react-native build-ios',
     `--scheme ${HARNESS_APP_NAME}`,
@@ -127,6 +133,58 @@ export function trimIOSBuildArtifacts(projectDir: string): void {
 }
 
 // ── Internals ───────────────────────────────────────────────────────
+
+/**
+ * Pre-seed `ios/Pods/Pods.xcodeproj/project.pbxproj` with a one-line file
+ * containing the literal string `-DRCT_NEW_ARCH_ENABLED=1`. This defeats the
+ * React Native community CLI's New-Architecture detection sniffer so that
+ * `react-native build-ios --force-pods` runs `pod install` with new arch on
+ * (matching the `RCTNewArchEnabled=true` the template writes to Info.plist).
+ *
+ * Why we need this: the CLI's `installPods` step hard-overrides
+ * `RCT_NEW_ARCH_ENABLED` to `'0'` or `'1'` in the pod-install child env
+ * based on the result of `getArchitecture(iosSourceDir)`, which is literally
+ *
+ *   const project = await readFile('<iosDir>/Pods/Pods.xcodeproj/project.pbxproj');
+ *   return project.includes('-DRCT_NEW_ARCH_ENABLED=1');
+ *
+ * — see `@react-native-community/cli-platform-apple/tools/getArchitecture.ts`.
+ * On a virgin scaffold that file doesn't exist (CocoaPods only creates it
+ * during `pod install`), the sniffer returns `false`, the CLI passes
+ * `RCT_NEW_ARCH_ENABLED='0'`, and Reanimated 4.x's podspec assertion
+ * aborts the install:
+ *
+ *   [!] Invalid `RNReanimated.podspec` file: [Reanimated] Reanimated requires
+ *   the New Architecture to be enabled. If you have `RCT_NEW_ARCH_ENABLED=0`
+ *   set in your environment you should remove it.
+ *
+ * Pre-seeding a dummy file that contains the marker substring is enough to
+ * make the sniffer return `true` on the first build. After `pod install`
+ * runs successfully with new arch on, CocoaPods regenerates this file with
+ * a real Xcode project that also contains `-DRCT_NEW_ARCH_ENABLED=1` (in the
+ * pod target's `OTHER_CFLAGS`), so subsequent rebuilds keep returning `true`
+ * — the workaround is self-sustaining.
+ *
+ * Upstream fix that would remove the env injection entirely:
+ * https://github.com/react-native-community/cli/pull/2773 — approved by the
+ * maintainer but unmerged as of CLI 20.1.3. Once it ships and we adopt it
+ * the bait file becomes a harmless one-line scratch file that pod install
+ * overwrites unconditionally.
+ */
+function seedNewArchSnifferBait(iosDir: string): void {
+  const podsXcodeprojDir = resolve(iosDir, 'Pods', 'Pods.xcodeproj');
+  mkdirSync(podsXcodeprojDir, { recursive: true });
+  const pbxprojPath = resolve(podsXcodeprojDir, 'project.pbxproj');
+  if (existsSync(pbxprojPath)) return;
+  writeFileSync(
+    pbxprojPath,
+    '// vitest-mobile new-arch sniffer bait: ensures react-native-community/cli ' +
+      'passes RCT_NEW_ARCH_ENABLED=1 to pod install on the first run. CocoaPods ' +
+      'overwrites this file during pod install, and the regenerated copy carries ' +
+      'the same marker since new arch ends up on.\n' +
+      '// -DRCT_NEW_ARCH_ENABLED=1\n',
+  );
+}
 
 /**
  * Xcode 26.4+ ships a stricter Apple Clang that rejects the consteval pattern

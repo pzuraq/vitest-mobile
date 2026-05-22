@@ -54,7 +54,11 @@ export type { HarnessBuildOptions, HarnessBuildResult };
 //     nativeModule matches the Expo naming convention (`expo`, `expo-*`, `@expo/*`).
 //     Old v5 binaries built with Expo modules listed as deps lacked the autolinking
 //     pipeline, so component renders that touched Expo modules' native side crashed.
-const BUILD_FORMAT_VERSION = 6;
+// v7: take over `pod install` ourselves (with explicit RCT_NEW_ARCH_ENABLED=1)
+//     instead of delegating to `react-native build-ios --force-pods`. Works
+//     around RN community CLI's broken getArchitecture sniffer, which on
+//     first install forces RCT_NEW_ARCH_ENABLED=0 and breaks Reanimated v4.
+const BUILD_FORMAT_VERSION = 7;
 
 const BUILTIN_NATIVE_DEPS = ['react-native-safe-area-context'];
 
